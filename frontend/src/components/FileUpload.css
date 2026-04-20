@@ -1,0 +1,35 @@
+.file-upload {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.upload-button {
+  padding: 0.5rem 1rem;
+  background-color: var(--primary);
+  color: white;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: all 0.3s ease;
+  display: inline-block;
+}
+
+.upload-button:hover {
+  background-color: #2563eb;
+}
+
+.upload-button:active {
+  transform: scale(0.98);
+}
+
+input[type="file"]:disabled + .upload-button {
+  background-color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+.upload-error {
+  color: var(--red);
+  font-size: 0.75rem;
+}
