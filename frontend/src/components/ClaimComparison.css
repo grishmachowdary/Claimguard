@@ -1,0 +1,186 @@
+.comparison-section {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+@media (max-width: 900px) {
+  .comparison-section { grid-template-columns: 1fr; }
+}
+
+.comparison-card, .rejection-card {
+  background: #0c1120;
+  border: 1px solid #141e35;
+  border-radius: 12px;
+  padding: 1.5rem;
+}
+
+.comparison-card h3, .rejection-card h3 {
+  color: #e2e8f0;
+  font-size: 1rem;
+  margin: 0 0 1.25rem;
+}
+
+/* Comparison scores */
+.comparison-scores {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5rem;
+  margin-bottom: 1rem;
+  padding: 1rem;
+  background: #060810;
+  border-radius: 10px;
+}
+
+.comp-score-item { text-align: center; }
+
+.comp-score-label {
+  display: block;
+  color: #475569;
+  font-size: 0.72rem;
+  margin-bottom: 0.3rem;
+}
+
+.comp-score-val {
+  display: block;
+  font-size: 2rem;
+  font-weight: 700;
+  font-family: 'Syne', sans-serif;
+}
+
+.comp-arrow {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.comp-summary {
+  color: #94a3b8;
+  font-size: 0.875rem;
+  margin: 0 0 1rem;
+  line-height: 1.5;
+}
+
+.comp-lists {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.comp-list h4 {
+  color: #e2e8f0;
+  font-size: 0.82rem;
+  margin: 0 0 0.4rem;
+}
+
+.comp-item {
+  font-size: 0.82rem;
+  margin: 0 0 0.25rem;
+  padding-left: 0.5rem;
+}
+
+.comp-ok  { color: #22c55e; }
+.comp-bad { color: #f59e0b; }
+
+.comp-stats {
+  display: flex;
+  justify-content: space-between;
+  color: #475569;
+  font-size: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #141e35;
+}
+
+/* Rejection predictor */
+.rejection-header {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  margin-bottom: 1.25rem;
+}
+
+.rejection-ring {
+  position: relative;
+  width: 100px;
+  height: 100px;
+  flex-shrink: 0;
+}
+
+.rejection-ring-text {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+}
+
+.rejection-ring-text span:first-child {
+  display: block;
+  font-size: 1.4rem;
+  font-weight: 700;
+  font-family: 'Syne', sans-serif;
+  line-height: 1;
+}
+
+.rejection-ring-text span:last-child {
+  color: #475569;
+  font-size: 0.7rem;
+}
+
+.rejection-level {
+  display: block;
+  font-weight: 700;
+  font-size: 1rem;
+  margin-bottom: 0.4rem;
+}
+
+.rejection-rec {
+  color: #94a3b8;
+  font-size: 0.82rem;
+  margin: 0;
+  line-height: 1.4;
+}
+
+.risk-factors h4 {
+  color: #e2e8f0;
+  font-size: 0.85rem;
+  margin: 0 0 0.75rem;
+}
+
+.risk-factor {
+  padding: 0.75rem;
+  border-radius: 8px;
+  margin-bottom: 0.6rem;
+  border-left: 3px solid;
+}
+
+.risk-high   { border-left-color: #ef4444; background: rgba(239,68,68,0.05); }
+.risk-medium { border-left-color: #f59e0b; background: rgba(245,158,11,0.05); }
+.risk-low    { border-left-color: #06b6d4; background: rgba(6,182,212,0.05); }
+
+.risk-factor-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.risk-factor-label { color: #e2e8f0; font-size: 0.82rem; font-weight: 600; }
+
+.risk-badge {
+  font-size: 0.65rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  font-weight: 700;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.rbadge-high   { background: rgba(239,68,68,0.15);  color: #ef4444; }
+.rbadge-medium { background: rgba(245,158,11,0.15); color: #f59e0b; }
+.rbadge-low    { background: rgba(6,182,212,0.15);  color: #06b6d4; }
+
+.risk-note { color: #475569; font-size: 0.78rem; margin: 0; line-height: 1.4; }

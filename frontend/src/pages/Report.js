@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getClaimReport, validateClaim, getApprovedNetwork, analyzeDocuments, downloadPackage } from '../api';
+import { getClaimReport, validateClaim, getApprovedNetwork, analyzeDocuments, downloadPackage, getClaimDeadline, getClaimComparison } from '../api';
 import QRModal from '../components/QRModal';
 import SubmitModal from '../components/SubmitModal';
 import ClaimTracker from '../components/ClaimTracker';
+import DeadlineTracker from '../components/DeadlineTracker';
+import ClaimComparison from '../components/ClaimComparison';
 import './Report.css';
 
 // ── Score Ring ────────────────────────────────────────────────────────────
@@ -66,6 +68,9 @@ function Report() {
   const [network,    setNetwork]    = useState(null);
   const [analysis,   setAnalysis]   = useState(null);
   const [analyzing,  setAnalyzing]  = useState(false);
+  const [deadline,   setDeadline]   = useState(null);
+  const [comparison, setComparison] = useState(null);
+  const [rejection,  setRejection]  = useState(null);
 
   useEffect(() => { loadReport(); }, [claimId]); // eslint-disable-line
 
@@ -92,6 +97,15 @@ function Report() {
     try {
       const res = await getApprovedNetwork(reportData.insurance_type_code, '', claimId);
       setNetwork(res.data);
+    } catch (e) { /* silent */ }
+    try {
+      const d = await getClaimDeadline(claimId);
+      setDeadline(d.data.deadline);
+    } catch (e) { /* silent */ }
+    try {
+      const c = await getClaimComparison(claimId);
+      setComparison(c.data.comparison);
+      setRejection(c.data.rejection);
     } catch (e) { /* silent */ }
   };
 
@@ -160,6 +174,9 @@ function Report() {
 
         {/* ── STATUS TRACKER ── */}
         <ClaimTracker claimId={report.id} />
+
+        {/* ── DEADLINE TRACKER ── */}
+        <DeadlineTracker deadline={deadline} />
 
         {/* ── AI APPROVAL SECTION ── */}
         {ai && (
@@ -323,6 +340,14 @@ function Report() {
                     <span className={`violation-badge badge-${v.severity}`}>{v.severity}</span>
                     <p className="violation-msg">{v.message}</p>
                     <p className="violation-fix">💡 {v.suggestion}</p>
+                    {v.rule_name && !v.rule_name.includes('document') && (
+                      <button
+                        className="fix-now-btn"
+                        onClick={() => navigate(-1)}
+                      >
+                        ✏️ Fix Now
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -421,6 +446,9 @@ function Report() {
             </div>
           </div>
         )}
+
+        {/* ── HISTORY COMPARISON + REJECTION PREDICTOR ── */}
+        <ClaimComparison comparison={comparison} rejection={rejection} />
 
         {/* ── APPROVED NETWORK ── */}
         {network && network.providers && network.providers.length > 0 && (

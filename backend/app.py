@@ -13,7 +13,7 @@ CORS(app)
 
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///claimguard.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['JWT_SECRET_KEY'] = 'claimguard-secret-key-change-in-production'
+app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'claimguard-dev-secret-key')
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=7)
 app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(__file__), 'uploads')
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
@@ -41,6 +41,16 @@ class User(db.Model):
     full_name  = db.Column(db.String(200), nullable=False)
     email      = db.Column(db.String(200), unique=True, nullable=False)
     password   = db.Column(db.String(255), nullable=False)
+    role       = db.Column(db.String(20), default='customer')  # customer | agent | insurer
+    company    = db.Column(db.String(200))  # for insurer role
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+class AgentClient(db.Model):
+    """Links agents to their clients."""
+    __tablename__ = 'agent_clients'
+    id         = db.Column(db.Integer, primary_key=True)
+    agent_id   = db.Column(db.Integer, db.ForeignKey('users.id'))
+    client_id  = db.Column(db.Integer, db.ForeignKey('users.id'))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 class InsuranceType(db.Model):
@@ -75,6 +85,8 @@ class Claim(db.Model):
     readiness_label   = db.Column(db.String(50))
     ai_report         = db.Column(db.Text)
     status            = db.Column(db.String(50), default='draft')
+    insurer_notes     = db.Column(db.Text)   # notes from insurer
+    assigned_insurer  = db.Column(db.String(100))  # which insurer it was submitted to
     created_at        = db.Column(db.DateTime, default=datetime.utcnow)
 
 class ClaimStatusHistory(db.Model):
@@ -112,6 +124,8 @@ def register():
     full_name = data.get('full_name', '').strip()
     email     = data.get('email', '').strip().lower()
     password  = data.get('password', '')
+    role      = data.get('role', 'customer')  # customer | agent | insurer
+    company   = data.get('company', '')
 
     if not full_name or not email or not password:
         return jsonify({'error': 'All fields are required'}), 400
@@ -119,16 +133,18 @@ def register():
         return jsonify({'error': 'Password must be at least 6 characters'}), 400
     if User.query.filter_by(email=email).first():
         return jsonify({'error': 'Email already registered'}), 409
+    if role not in ['customer', 'agent', 'insurer']:
+        role = 'customer'
 
     hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-    user = User(full_name=full_name, email=email, password=hashed)
+    user = User(full_name=full_name, email=email, password=hashed, role=role, company=company)
     db.session.add(user)
     db.session.commit()
 
     token = create_access_token(identity=str(user.id))
     return jsonify({
         'token': token,
-        'user': {'id': user.id, 'full_name': user.full_name, 'email': user.email}
+        'user': {'id': user.id, 'full_name': user.full_name, 'email': user.email, 'role': user.role}
     }), 201
 
 @app.route('/api/auth/login', methods=['POST'])
@@ -151,10 +167,10 @@ def login():
 @jwt_required()
 def get_me():
     user_id = get_jwt_identity()
-    user = User.query.get(user_id)
+    user = db.session.get(User, user_id)
     if not user:
         return jsonify({'error': 'User not found'}), 404
-    return jsonify({'id': user.id, 'full_name': user.full_name, 'email': user.email})
+    return jsonify({'id': user.id, 'full_name': user.full_name, 'email': user.email, 'role': user.role, 'company': user.company})
 
 # ── Routes ───────────────────────────────────────────────────────────────────
 
@@ -189,11 +205,15 @@ def get_rules(insurance_type):
 
 @app.route('/api/claims', methods=['GET'])
 def get_claims():
-    all_claims = Claim.query.order_by(Claim.created_at.desc()).all()
+    page     = request.args.get('page', 1, type=int)
+    per_page = 10
+    query    = Claim.query.order_by(Claim.created_at.desc())
+    total    = query.count()
+    all_claims = query.offset((page - 1) * per_page).limit(per_page).all()
     result = []
     for c in all_claims:
         form_data = json.loads(c.form_data) if c.form_data else {}
-        ins_type = InsuranceType.query.get(c.insurance_type_id)
+        ins_type = db.session.get(InsuranceType, c.insurance_type_id)
         result.append({
             'id': c.id,
             'insurance_type_id': c.insurance_type_id,
@@ -204,7 +224,12 @@ def get_claims():
             'status': c.status,
             'created_at': c.created_at.isoformat() if c.created_at else None
         })
-    return jsonify(result)
+    return jsonify({
+        'claims': result,
+        'total': total,
+        'page': page,
+        'pages': (total + per_page - 1) // per_page
+    })
 
 @app.route('/api/claims', methods=['POST'])
 def create_claim():
@@ -233,31 +258,137 @@ def update_claim(claim_id):
 @app.route('/api/claims/<int:claim_id>/validate', methods=['POST'])
 def validate_claim(claim_id):
     claim = Claim.query.get_or_404(claim_id)
-    from rule_engine import validate_claim as run_validation
-    result = run_validation(claim)
 
-    # Update status based on score
-    if result['score'] >= 80:
-        claim.status = 'ready'
-        note = f'Validation complete. Score: {result["score"]}/100. Claim is ready to submit.'
-    elif result['score'] >= 50:
-        claim.status = 'needs_attention'
-        note = f'Validation complete. Score: {result["score"]}/100. Some issues need attention.'
-    else:
-        claim.status = 'incomplete'
-        note = f'Validation complete. Score: {result["score"]}/100. Critical issues found.'
+    # ── Run rule engine inline ────────────────────────────────────────────
+    import json as _json
+    from datetime import datetime as _dt
+
+    all_rules         = Rule.query.filter_by(insurance_type_id=claim.insurance_type_id).all()
+    doc_rules         = [r for r in all_rules if r.rule_type == 'document']
+    field_rules       = [r for r in all_rules if r.rule_type == 'field']
+    consistency_rules = [r for r in all_rules if r.rule_type == 'consistency']
+
+    uploaded_docs = json.loads(claim.uploaded_docs) if claim.uploaded_docs else []
+    form_data     = json.loads(claim.form_data)     if claim.form_data     else {}
+
+    violations = []
+
+    # Document score (40 pts)
+    required_docs  = [r for r in doc_rules if r.is_required]
+    max_doc_weight = sum(r.weight for r in required_docs)
+    earned_weight  = sum(r.weight for r in required_docs if r.name in uploaded_docs)
+    document_score = (earned_weight / max_doc_weight * 40) if max_doc_weight > 0 else 0
+
+    for rule in required_docs:
+        if rule.name not in uploaded_docs:
+            violations.append({'rule_name': rule.name, 'message': f'Missing required document: {rule.label}',
+                                'suggestion': rule.suggestion, 'severity': rule.severity})
+
+    # Field score (35 pts)
+    required_fields = [r for r in field_rules if r.is_required]
+    total_fields    = len(required_fields)
+    filled_fields   = sum(1 for r in required_fields if form_data.get(r.name))
+    field_score     = (filled_fields / total_fields * 35) if total_fields > 0 else 0
+
+    for rule in required_fields:
+        if not form_data.get(rule.name):
+            violations.append({'rule_name': rule.name, 'message': f'Missing required field: {rule.label}',
+                                'suggestion': rule.suggestion, 'severity': rule.severity})
+
+    # Consistency score (25 pts)
+    consistency_score = 25
+    ins_type = db.session.get(InsuranceType, claim.insurance_type_id)
+
+    def add_v(name, deduction):
+        rule = next((r for r in consistency_rules if r.name == name), None)
+        if rule:
+            violations.append({'rule_name': rule.name, 'message': rule.label,
+                                'suggestion': rule.suggestion, 'severity': rule.severity})
+        return deduction
+
+    def parse_date(s):
+        try: return _dt.strptime(s, '%Y-%m-%d')
+        except: return None
+
+    if ins_type:
+        code = ins_type.code
+        if code == 'health':
+            adm = parse_date(form_data.get('admission_date',''))
+            dis = parse_date(form_data.get('discharge_date',''))
+            if adm and dis and dis <= adm:
+                consistency_score -= add_v('discharge_after_admission', 15)
+            amt = form_data.get('claim_amount'); cov = form_data.get('policy_coverage')
+            if amt and cov and float(amt) > float(cov):
+                consistency_score -= add_v('claim_within_coverage', 10)
+
+        elif code == 'vehicle':
+            amt = form_data.get('claim_amount'); cov = form_data.get('policy_coverage')
+            if amt and cov and float(amt) > float(cov):
+                consistency_score -= add_v('claim_within_coverage', 10)
+
+        elif code == 'life':
+            amt = form_data.get('claim_amount'); sa = form_data.get('sum_assured')
+            if amt and sa and abs(float(amt) - float(sa)) > 1000:
+                consistency_score -= add_v('claim_matches_sum_assured', 10)
+
+        elif code == 'property':
+            amt = form_data.get('claim_amount'); val = form_data.get('property_value')
+            if amt and val and float(amt) > float(val):
+                consistency_score -= add_v('claim_within_value', 10)
+
+        elif code == 'travel':
+            s = parse_date(form_data.get('travel_start_date',''))
+            e = parse_date(form_data.get('travel_end_date',''))
+            i = parse_date(form_data.get('incident_date',''))
+            if s and e and e <= s:
+                consistency_score -= add_v('travel_end_after_start', 15)
+            if s and e and i and (i < s or i > e):
+                consistency_score -= add_v('incident_during_travel', 15)
+
+        elif code == 'crop':
+            sow = parse_date(form_data.get('sowing_date',''))
+            dmg = parse_date(form_data.get('damage_date',''))
+            if sow and dmg and dmg <= sow:
+                consistency_score -= add_v('damage_after_sowing', 15)
+
+    consistency_score = max(0, consistency_score)
+    final_score = max(0, min(100, round(document_score + field_score + consistency_score)))
+
+    if final_score >= 80:   readiness_label = 'Ready to Submit';   new_status = 'ready'
+    elif final_score >= 50: readiness_label = 'Needs Attention';   new_status = 'needs_attention'
+    else:                   readiness_label = 'Incomplete';         new_status = 'incomplete'
+
+    claim.readiness_score = final_score
+    claim.score_breakdown = json.dumps({
+        'document': round(document_score, 1), 'field': round(field_score, 1),
+        'consistency': round(consistency_score, 1),
+        'doc_earned': earned_weight, 'doc_max': max_doc_weight,
+        'doc_pct': round(earned_weight / max_doc_weight * 100, 1) if max_doc_weight else 0,
+        'field_filled': filled_fields, 'field_total': total_fields,
+        'field_pct': round(filled_fields / total_fields * 100, 1) if total_fields else 0,
+    })
+    claim.readiness_label = readiness_label
+    claim.status = new_status
+
+    Violation.query.filter_by(claim_id=claim_id).delete()
+    for v in violations:
+        db.session.add(Violation(claim_id=claim_id, rule_name=v['rule_name'],
+                                  message=v['message'], suggestion=v['suggestion'], severity=v['severity']))
     db.session.commit()
-    log_status(claim_id, claim.status, note)
+    log_status(claim_id, new_status, f'Validation complete. Score: {final_score}/100.')
 
     # Generate AI report
     from ai_report import generate_ai_report
-    rules        = Rule.query.filter_by(insurance_type_id=claim.insurance_type_id).all()
-    uploaded_docs = json.loads(claim.uploaded_docs) if claim.uploaded_docs else []
-    ai_report    = generate_ai_report(claim, result['violations'], rules, uploaded_docs)
+    rules_list   = Rule.query.filter_by(insurance_type_id=claim.insurance_type_id).all()
+    ai_report    = generate_ai_report(claim, violations, rules_list, uploaded_docs)
     claim.ai_report = json.dumps(ai_report)
     db.session.commit()
 
-    result['ai_report'] = ai_report
+    result = {'score': final_score,
+              'breakdown': json.loads(claim.score_breakdown),
+              'readiness_label': readiness_label,
+              'violations': violations,
+              'ai_report': ai_report}
     return jsonify(result)
 
 @app.route('/api/claims/<int:claim_id>/report', methods=['GET'])
@@ -505,6 +636,39 @@ def get_approved_network(insurance_type):
 
 # ── Smart Document Analyzer ───────────────────────────────────────────────────
 
+@app.route('/api/claims/<int:claim_id>/deadline', methods=['GET'])
+def get_claim_deadline(claim_id):
+    claim    = Claim.query.get_or_404(claim_id)
+    ins_type = InsuranceType.query.get(claim.insurance_type_id)
+    form_data = json.loads(claim.form_data) if claim.form_data else {}
+    if not ins_type:
+        return jsonify({'deadline': None})
+    from deadline_tracker import calculate_deadline
+    deadline = calculate_deadline(ins_type.code, form_data)
+    return jsonify({'deadline': deadline})
+
+@app.route('/api/claims/<int:claim_id>/comparison', methods=['GET'])
+def get_claim_comparison(claim_id):
+    claim      = Claim.query.get_or_404(claim_id)
+    violations = Violation.query.filter_by(claim_id=claim_id).all()
+    ins_type   = InsuranceType.query.get(claim.insurance_type_id)
+    form_data  = json.loads(claim.form_data) if claim.form_data else {}
+
+    # Get all past claims for this user
+    past_claims = Claim.query.filter(
+        Claim.user_id == claim.user_id,
+        Claim.id != claim_id
+    ).all() if claim.user_id else []
+
+    from claim_comparison import compare_claims, get_rejection_predictor
+    comparison = compare_claims(claim, past_claims, [{'severity': v.severity} for v in violations])
+    rejection  = get_rejection_predictor(
+        ins_type.code if ins_type else 'health',
+        form_data,
+        [{'severity': v.severity} for v in violations]
+    )
+    return jsonify({'comparison': comparison, 'rejection': rejection})
+
 @app.route('/api/claims/<int:claim_id>/analyze', methods=['POST'])
 def analyze_claim_documents(claim_id):
     claim = Claim.query.get_or_404(claim_id)
@@ -650,6 +814,224 @@ def submit_to_insurer(claim_id):
         'claim_id':         claim_id,
         'insurance_type':   ins_type.name if ins_type else None,
         'score':            claim.readiness_score,
+    })
+
+# ── Agent Routes ──────────────────────────────────────────────────────────────
+
+@app.route('/api/agent/clients', methods=['GET'])
+@jwt_required()
+def get_agent_clients():
+    agent_id = get_jwt_identity()
+    agent = db.session.get(User, agent_id)
+    if not agent or agent.role != 'agent':
+        return jsonify({'error': 'Agent access required'}), 403
+
+    links = AgentClient.query.filter_by(agent_id=agent_id).all()
+    clients = []
+    for link in links:
+        client = db.session.get(User, link.client_id)
+        if not client: continue
+        claims = Claim.query.filter_by(user_id=link.client_id).all()
+        scores = [c.readiness_score for c in claims if c.readiness_score is not None]
+        clients.append({
+            'id':           client.id,
+            'full_name':    client.full_name,
+            'email':        client.email,
+            'total_claims': len(claims),
+            'avg_score':    round(sum(scores)/len(scores), 1) if scores else 0,
+            'ready_claims': len([c for c in claims if c.status == 'ready']),
+            'pending_claims': len([c for c in claims if c.status in ['draft','incomplete','needs_attention']]),
+            'submitted_claims': len([c for c in claims if c.status in ['submitted','under_review','approved']]),
+            'linked_at':    link.created_at.isoformat(),
+        })
+    return jsonify({'clients': clients, 'total': len(clients)})
+
+@app.route('/api/agent/clients', methods=['POST'])
+@jwt_required()
+def add_agent_client():
+    agent_id = get_jwt_identity()
+    agent = db.session.get(User, agent_id)
+    if not agent or agent.role != 'agent':
+        return jsonify({'error': 'Agent access required'}), 403
+
+    data = request.json
+    client_email = data.get('email', '').strip().lower()
+    client = User.query.filter_by(email=client_email).first()
+    if not client:
+        return jsonify({'error': 'No user found with this email'}), 404
+    if client.role != 'customer':
+        return jsonify({'error': 'Can only add customers as clients'}), 400
+
+    existing = AgentClient.query.filter_by(agent_id=agent_id, client_id=client.id).first()
+    if existing:
+        return jsonify({'error': 'Client already added'}), 409
+
+    link = AgentClient(agent_id=agent_id, client_id=client.id)
+    db.session.add(link)
+    db.session.commit()
+    return jsonify({'message': f'{client.full_name} added as client', 'client_id': client.id}), 201
+
+@app.route('/api/agent/clients/<int:client_id>', methods=['DELETE'])
+@jwt_required()
+def remove_agent_client(client_id):
+    agent_id = get_jwt_identity()
+    link = AgentClient.query.filter_by(agent_id=agent_id, client_id=client_id).first_or_404()
+    db.session.delete(link)
+    db.session.commit()
+    return jsonify({'message': 'Client removed'})
+
+@app.route('/api/agent/clients/<int:client_id>/claims', methods=['GET'])
+@jwt_required()
+def get_client_claims(client_id):
+    agent_id = get_jwt_identity()
+    agent = db.session.get(User, agent_id)
+    if not agent or agent.role != 'agent':
+        return jsonify({'error': 'Agent access required'}), 403
+
+    link = AgentClient.query.filter_by(agent_id=agent_id, client_id=client_id).first()
+    if not link:
+        return jsonify({'error': 'Client not in your portfolio'}), 403
+
+    claims = Claim.query.filter_by(user_id=client_id).order_by(Claim.created_at.desc()).all()
+    result = []
+    for c in claims:
+        form_data = json.loads(c.form_data) if c.form_data else {}
+        ins_type  = db.session.get(InsuranceType, c.insurance_type_id)
+        result.append({
+            'id': c.id, 'insurance_type': ins_type.name if ins_type else None,
+            'policy_number': form_data.get('policy_number', 'N/A'),
+            'readiness_score': c.readiness_score, 'readiness_label': c.readiness_label,
+            'status': c.status, 'created_at': c.created_at.isoformat()
+        })
+    return jsonify({'claims': result})
+
+@app.route('/api/agent/stats', methods=['GET'])
+@jwt_required()
+def get_agent_stats():
+    agent_id = get_jwt_identity()
+    agent = db.session.get(User, agent_id)
+    if not agent or agent.role != 'agent':
+        return jsonify({'error': 'Agent access required'}), 403
+
+    links = AgentClient.query.filter_by(agent_id=agent_id).all()
+    client_ids = [l.client_id for l in links]
+    all_claims = Claim.query.filter(Claim.user_id.in_(client_ids)).all() if client_ids else []
+    scores = [c.readiness_score for c in all_claims if c.readiness_score is not None]
+
+    return jsonify({
+        'total_clients':    len(links),
+        'total_claims':     len(all_claims),
+        'avg_score':        round(sum(scores)/len(scores), 1) if scores else 0,
+        'ready_to_submit':  len([c for c in all_claims if c.status == 'ready']),
+        'submitted':        len([c for c in all_claims if c.status in ['submitted','under_review']]),
+        'approved':         len([c for c in all_claims if c.status == 'approved']),
+        'needs_attention':  len([c for c in all_claims if c.status in ['incomplete','needs_attention']]),
+    })
+
+# ── Insurer Routes ────────────────────────────────────────────────────────────
+
+@app.route('/api/insurer/claims', methods=['GET'])
+@jwt_required()
+def get_insurer_claims():
+    user_id = get_jwt_identity()
+    user = db.session.get(User, user_id)
+    if not user or user.role != 'insurer':
+        return jsonify({'error': 'Insurer access required'}), 403
+
+    status_filter = request.args.get('status', '')
+    page     = request.args.get('page', 1, type=int)
+    per_page = 15
+
+    query = Claim.query.filter(Claim.status.in_(['submitted','under_review','approved','rejected']))
+    if status_filter:
+        query = query.filter_by(status=status_filter)
+    total = query.count()
+    claims = query.order_by(Claim.created_at.desc()).offset((page-1)*per_page).limit(per_page).all()
+
+    result = []
+    for c in claims:
+        form_data = json.loads(c.form_data) if c.form_data else {}
+        ins_type  = db.session.get(InsuranceType, c.insurance_type_id)
+        claimant  = db.session.get(User, c.user_id) if c.user_id else None
+        result.append({
+            'id':              c.id,
+            'insurance_type':  ins_type.name if ins_type else None,
+            'insurance_code':  ins_type.code if ins_type else None,
+            'claimant_name':   claimant.full_name if claimant else 'Unknown',
+            'claimant_email':  claimant.email if claimant else None,
+            'policy_number':   form_data.get('policy_number', 'N/A'),
+            'claim_amount':    form_data.get('claim_amount', 0),
+            'readiness_score': c.readiness_score,
+            'readiness_label': c.readiness_label,
+            'status':          c.status,
+            'insurer_notes':   c.insurer_notes,
+            'assigned_insurer': c.assigned_insurer,
+            'created_at':      c.created_at.isoformat(),
+        })
+    return jsonify({'claims': result, 'total': total, 'page': page, 'pages': (total+per_page-1)//per_page})
+
+@app.route('/api/insurer/claims/<int:claim_id>/review', methods=['PUT'])
+@jwt_required()
+def review_claim(claim_id):
+    user_id = get_jwt_identity()
+    user = db.session.get(User, user_id)
+    if not user or user.role != 'insurer':
+        return jsonify({'error': 'Insurer access required'}), 403
+
+    claim  = Claim.query.get_or_404(claim_id)
+    data   = request.json
+    action = data.get('action')  # approve | reject | request_info | under_review
+    notes  = data.get('notes', '')
+
+    status_map = {
+        'approve':      'approved',
+        'reject':       'rejected',
+        'request_info': 'needs_attention',
+        'under_review': 'under_review',
+    }
+
+    if action not in status_map:
+        return jsonify({'error': 'Invalid action'}), 400
+
+    new_status = status_map[action]
+    claim.status = new_status
+    claim.insurer_notes = notes
+    db.session.commit()
+    log_status(claim_id, new_status, f'Insurer action: {action}. Notes: {notes}')
+
+    return jsonify({
+        'message':    f'Claim {action}d successfully',
+        'claim_id':   claim_id,
+        'new_status': new_status,
+        'notes':      notes,
+    })
+
+@app.route('/api/insurer/stats', methods=['GET'])
+@jwt_required()
+def get_insurer_stats():
+    user_id = get_jwt_identity()
+    user = db.session.get(User, user_id)
+    if not user or user.role != 'insurer':
+        return jsonify({'error': 'Insurer access required'}), 403
+
+    submitted    = Claim.query.filter_by(status='submitted').count()
+    under_review = Claim.query.filter_by(status='under_review').count()
+    approved     = Claim.query.filter_by(status='approved').count()
+    rejected     = Claim.query.filter_by(status='rejected').count()
+    total        = submitted + under_review + approved + rejected
+
+    scores = [c.readiness_score for c in Claim.query.filter(
+        Claim.status.in_(['submitted','under_review','approved','rejected']),
+        Claim.readiness_score.isnot(None)
+    ).all()]
+
+    return jsonify({
+        'total_received':  total,
+        'pending_review':  submitted + under_review,
+        'approved':        approved,
+        'rejected':        rejected,
+        'approval_rate':   round(approved / total * 100, 1) if total else 0,
+        'avg_claim_score': round(sum(scores)/len(scores), 1) if scores else 0,
     })
 
 if __name__ == '__main__':

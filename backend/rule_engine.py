@@ -1,8 +1,10 @@
-from app import db, Rule, Violation, InsuranceType
 from datetime import datetime
 import json
 
 def validate_claim(claim):
+    # Import inside function to avoid circular import issues
+    from app import db, Rule, Violation, InsuranceType
+
     violations = []
 
     # Get all rules for this insurance type
@@ -87,7 +89,6 @@ def validate_claim(claim):
         'document':    round(document_score, 1),
         'field':       round(field_score, 1),
         'consistency': round(consistency_score, 1),
-        # Extra detail for UI
         'doc_earned':  earned_weight,
         'doc_max':     max_doc_weight,
         'doc_pct':     round(earned_weight / max_doc_weight * 100, 1) if max_doc_weight else 0,

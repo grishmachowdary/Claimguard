@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getRules, createClaim } from '../api';
+import StepProgress from '../components/StepProgress';
 import './Documents.css';
 
 function Documents() {
@@ -142,6 +143,8 @@ function Documents() {
             </div>
           </div>
         </div>
+
+        <StepProgress current={1} />
 
         {/* Progress bar */}
         <div className="progress-section">

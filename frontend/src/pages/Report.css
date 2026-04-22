@@ -976,3 +976,19 @@
 }
 
 .btn-download:hover { background: rgba(34,197,94,0.1); }
+
+/* Fix Now button */
+.fix-now-btn {
+  margin-top: 0.5rem;
+  padding: 0.3rem 0.75rem;
+  background: none;
+  border: 1px solid #3b82f6;
+  color: #3b82f6;
+  border-radius: 5px;
+  font-size: 0.78rem;
+  cursor: pointer;
+  font-family: 'DM Sans', sans-serif;
+  transition: all 0.2s;
+}
+
+.fix-now-btn:hover { background: rgba(59,130,246,0.1); }

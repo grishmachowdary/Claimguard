@@ -8,7 +8,7 @@ function Register() {
   const navigate = useNavigate();
   const { loginUser } = useAuth();
 
-  const [form,    setForm]    = useState({ full_name: '', email: '', password: '', confirm: '' });
+  const [form,    setForm]    = useState({ full_name: '', email: '', password: '', confirm: '', role: 'customer', company: '' });
   const [error,   setError]   = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -25,9 +25,12 @@ function Register() {
 
     setLoading(true);
     try {
-      const res = await register({ full_name: form.full_name, email: form.email, password: form.password });
+      const res = await register({ full_name: form.full_name, email: form.email, password: form.password, role: form.role, company: form.company });
       loginUser(res.data.token, res.data.user);
-      navigate('/');
+      // Redirect based on role
+      if (form.role === 'agent')    navigate('/agent');
+      else if (form.role === 'insurer') navigate('/insurer');
+      else navigate('/');
     } catch (err) {
       setError(err.response?.data?.error || 'Registration failed. Try again.');
     } finally {
@@ -49,54 +52,54 @@ function Register() {
         <form onSubmit={handleSubmit} className="auth-form">
           <div className="auth-field">
             <label>Full Name</label>
-            <input
-              type="text"
-              name="full_name"
-              value={form.full_name}
-              onChange={handleChange}
-              placeholder="Your full name"
-              className="auth-input"
-              autoComplete="name"
-            />
+            <input type="text" name="full_name" value={form.full_name} onChange={handleChange}
+              placeholder="Your full name" className="auth-input" autoComplete="name" />
           </div>
 
           <div className="auth-field">
             <label>Email</label>
-            <input
-              type="email"
-              name="email"
-              value={form.email}
-              onChange={handleChange}
-              placeholder="you@example.com"
-              className="auth-input"
-              autoComplete="email"
-            />
+            <input type="email" name="email" value={form.email} onChange={handleChange}
+              placeholder="you@example.com" className="auth-input" autoComplete="email" />
           </div>
 
           <div className="auth-field">
+            <label>I am a</label>
+            <div className="role-selector">
+              {[
+                { val: 'customer', label: '👤 Customer',  desc: 'Filing my own claims' },
+                { val: 'agent',    label: '🤝 Agent',     desc: 'Managing client claims' },
+                { val: 'insurer',  label: '🏛️ Insurer',   desc: 'Reviewing submitted claims' },
+              ].map(r => (
+                <div
+                  key={r.val}
+                  className={`role-option ${form.role === r.val ? 'role-selected' : ''}`}
+                  onClick={() => setForm(prev => ({ ...prev, role: r.val }))}
+                >
+                  <span className="role-label">{r.label}</span>
+                  <span className="role-desc">{r.desc}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {form.role === 'insurer' && (
+            <div className="auth-field">
+              <label>Company Name</label>
+              <input type="text" name="company" value={form.company || ''} onChange={handleChange}
+                placeholder="e.g. Star Health Insurance" className="auth-input" />
+            </div>
+          )}
+
+          <div className="auth-field">
             <label>Password</label>
-            <input
-              type="password"
-              name="password"
-              value={form.password}
-              onChange={handleChange}
-              placeholder="Min 6 characters"
-              className="auth-input"
-              autoComplete="new-password"
-            />
+            <input type="password" name="password" value={form.password} onChange={handleChange}
+              placeholder="Min 6 characters" className="auth-input" autoComplete="new-password" />
           </div>
 
           <div className="auth-field">
             <label>Confirm Password</label>
-            <input
-              type="password"
-              name="confirm"
-              value={form.confirm}
-              onChange={handleChange}
-              placeholder="Repeat your password"
-              className="auth-input"
-              autoComplete="new-password"
-            />
+            <input type="password" name="confirm" value={form.confirm} onChange={handleChange}
+              placeholder="Repeat your password" className="auth-input" autoComplete="new-password" />
           </div>
 
           {error && <p className="auth-error">⚠ {error}</p>}

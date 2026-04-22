@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { getRules, updateClaim, validateClaim } from '../api';
+import StepProgress from '../components/StepProgress';
 import './Details.css';
 
 // Field type detection
@@ -28,11 +29,16 @@ function Details() {
   const insuranceType = location.state?.insuranceType || localStorage.getItem('insurance_type') || 'health';
 
   const [fields,     setFields]     = useState([]);
-  const [formData,   setFormData]   = useState({});
+  const [formData,   setFormData]   = useState(() => {
+    // Restore draft from localStorage
+    const draft = localStorage.getItem(`draft_${claimId}`);
+    return draft ? JSON.parse(draft) : {};
+  });
   const [errors,     setErrors]     = useState({});
   const [touched,    setTouched]    = useState({});
   const [loading,    setLoading]    = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [savedDraft, setSavedDraft] = useState(false);
 
   useEffect(() => { loadFields(); }, [insuranceType]); // eslint-disable-line
 
@@ -87,6 +93,10 @@ function Details() {
   const handleChange = (name, value) => {
     const updated = { ...formData, [name]: value };
     setFormData(updated);
+    // Auto-save draft
+    localStorage.setItem(`draft_${claimId}`, JSON.stringify(updated));
+    setSavedDraft(true);
+    setTimeout(() => setSavedDraft(false), 2000);
     if (touched[name]) setErrors(validate(name, value, updated));
   };
 
@@ -133,6 +143,7 @@ function Details() {
     try {
       await updateClaim(claimId, { form_data: formData });
       await validateClaim(claimId);
+      localStorage.removeItem(`draft_${claimId}`); // clear draft on success
       navigate(`/report/${claimId}`);
     } catch (e) {
       console.error('Submit error:', e);
@@ -171,10 +182,13 @@ function Details() {
             <span>{icons[insuranceType] || '📋'}</span>
             <div>
               <h1>Claim Details</h1>
-              <p>{insuranceType.charAt(0).toUpperCase() + insuranceType.slice(1)} Insurance — Fill all required fields</p>
+              <p>{insuranceType.charAt(0).toUpperCase() + insuranceType.slice(1)} Insurance</p>
             </div>
+            {savedDraft && <span className="draft-saved">✓ Draft saved</span>}
           </div>
         </div>
+
+        <StepProgress current={2} />
 
         {/* Progress */}
         <div className="form-progress">

@@ -25,7 +25,10 @@ function Login() {
     try {
       const res = await login(form);
       loginUser(res.data.token, res.data.user);
-      navigate('/');
+      const role = res.data.user?.role;
+      if (role === 'agent')    navigate('/agent');
+      else if (role === 'insurer') navigate('/insurer');
+      else navigate('/');
     } catch (err) {
       setError(err.response?.data?.error || 'Login failed. Try again.');
     } finally {

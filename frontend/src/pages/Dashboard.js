@@ -1,22 +1,29 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getClaims } from '../api';
 import { useAuth } from '../context/AuthContext';
 import './Dashboard.css';
 
 function Dashboard() {
-  const [claims,  setClaims]  = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [claims,  setClaims]     = useState([]);
+  const [loading, setLoading]    = useState(true);
+  const [error,   setError]      = useState('');
+  const [page,    setPage]       = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
   const navigate = useNavigate();
   const { user }  = useAuth();
 
-  useEffect(() => { loadClaims(); }, []);
+  useEffect(() => { loadClaims(page); }, [page]); // eslint-disable-line
 
-  const loadClaims = async () => {
+  const loadClaims = async (page = 1) => {
     try {
-      const res = await getClaims();
-      setClaims(res.data);
+      const res = await getClaims(page);
+      // Handle both paginated {claims:[]} and legacy array response
+      const data = res.data;
+      setClaims(Array.isArray(data) ? data : (data.claims || []));
+      setTotalPages(data.pages || 1);
     } catch (e) {
+      setError('Failed to load claims. Please try again.');
       console.error(e);
     } finally {
       setLoading(false);
@@ -41,6 +48,13 @@ function Dashboard() {
   if (loading) return (
     <div className="dash-loading">
       <div className="spinner" /><p>Loading claims...</p>
+    </div>
+  );
+
+  if (error) return (
+    <div className="dash-loading">
+      <p style={{ color: '#ef4444' }}>{error}</p>
+      <button className="new-claim-btn" onClick={() => loadClaims(1)}>Retry</button>
     </div>
   );
 
@@ -115,6 +129,16 @@ function Dashboard() {
             })}
           </div>
         )}
+
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div className="pagination">
+            <button className="page-btn" disabled={page === 1} onClick={() => setPage(p => p - 1)}>← Prev</button>
+            <span className="page-info">Page {page} of {totalPages}</span>
+            <button className="page-btn" disabled={page === totalPages} onClick={() => setPage(p => p + 1)}>Next →</button>
+          </div>
+        )}
+
       </div>
     </div>
   );

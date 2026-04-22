@@ -1,6 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import LanguageSelector from './LanguageSelector';
 import './Navbar.css';
 
 function Navbar() {
@@ -23,6 +24,9 @@ function Navbar() {
         </div>
         <div className="navbar-right">
           <button className="navbar-link" onClick={() => navigate('/dashboard')}>My Claims</button>
+          {user?.role === 'agent'   && <button className="navbar-link" onClick={() => navigate('/agent')}>Agent Portal</button>}
+          {user?.role === 'insurer' && <button className="navbar-link" onClick={() => navigate('/insurer')}>Insurer Portal</button>}
+          <LanguageSelector />
           <div className="navbar-user">
             <span className="navbar-avatar">{user.full_name.charAt(0).toUpperCase()}</span>
             <span className="navbar-username">{user.full_name}</span>
