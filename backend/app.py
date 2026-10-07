@@ -7,7 +7,19 @@ from werkzeug.utils import secure_filename
 import bcrypt
 import json
 import os
+import logging
+import time
 from config import get_config
+
+# Document intelligence modules (lazy-loaded with error handling)
+try:
+    from ocr_engine import extract_text, extract_text_with_boxes
+    from field_extractor import extract_fields
+    from document_classifier import classify_document
+    OCR_AVAILABLE = True
+except ImportError as e:
+    OCR_AVAILABLE = False
+    logging.warning(f'Document intelligence modules not available: {e}')
 
 app = Flask(__name__)
 CORS(app)
@@ -118,6 +130,19 @@ class ClaimDocument(db.Model):
     file_path = db.Column(db.String(500))
     file_size = db.Column(db.Integer)
     uploaded_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+class ClaimDocumentAnalysis(db.Model):
+    __tablename__ = 'claim_document_analyses'
+    id = db.Column(db.Integer, primary_key=True)
+    claim_id = db.Column(db.Integer, db.ForeignKey('claims.id'))
+    document_id = db.Column(db.Integer, db.ForeignKey('claim_documents.id'))
+    ocr_text = db.Column(db.Text)
+    ocr_confidence = db.Column(db.Float)
+    document_type = db.Column(db.String(100))
+    classification_confidence = db.Column(db.Float)
+    extracted_fields = db.Column(db.Text)
+    confidence_score = db.Column(db.Float)
+    analysis_timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
 # ── Auth Routes ──────────────────────────────────────────────────────────────
 
@@ -534,6 +559,191 @@ def delete_document(claim_id, doc_id):
 
     db.session.commit()
     return jsonify({'message': 'Document deleted successfully'})
+
+# ── Document Intelligence Routes ────────────────────────────────────────────
+
+@app.route('/api/claims/<int:claim_id>/analyze-document', methods=['POST'])
+def analyze_document(claim_id):
+    """
+    Analyze a document: OCR + classification + field extraction.
+    
+    Returns full analysis with OCR text, document type, and extracted fields.
+    """
+    if not OCR_AVAILABLE:
+        return jsonify({'error': 'OCR service not available'}), 503
+    
+    claim = Claim.query.get_or_404(claim_id)
+    
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+    
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+    if not allowed_file(file.filename):
+        return jsonify({'error': 'Only PDF, PNG, JPG files allowed'}), 400
+    
+    # Check file size (max 10MB)
+    file.seek(0, 2)
+    file_size = file.tell()
+    file.seek(0)
+    if file_size > 10 * 1024 * 1024:
+        return jsonify({'error': 'File too large (max 10MB)'}), 400
+    
+    try:
+        # Save file temporarily
+        claim_folder = os.path.join(app.config['UPLOAD_FOLDER'], str(claim_id))
+        os.makedirs(claim_folder, exist_ok=True)
+        
+        filename = secure_filename(file.filename)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+        temp_filename = f"ocr_temp_{timestamp}_{filename}"
+        temp_file_path = os.path.join(claim_folder, temp_filename)
+        
+        file.save(temp_file_path)
+        
+        try:
+            # Run analysis pipeline
+            start_time = time.time()
+            
+            # 1. OCR
+            ocr_text = extract_text(temp_file_path)
+            ocr_confidence = 0.85 if ocr_text else 0.0
+            
+            # 2. Classification
+            classification = classify_document(ocr_text)
+            
+            # 3. Field extraction
+            field_result = extract_fields(ocr_text)
+            extracted_fields = field_result.get('fields', {})
+            field_confidence = field_result.get('confidence', {})
+            
+            # Calculate overall confidence
+            if ocr_text:
+                overall_confidence = (ocr_confidence + classification.get('confidence', 0) + 
+                                    (sum(field_confidence.values()) / len(field_confidence) if field_confidence else 0)) / 3
+            else:
+                overall_confidence = 0.0
+            
+            processing_time = int((time.time() - start_time) * 1000)
+            
+            # Store analysis in database
+            analysis_record = ClaimDocumentAnalysis(
+                claim_id=claim_id,
+                ocr_text=ocr_text,
+                ocr_confidence=ocr_confidence,
+                document_type=classification.get('type', 'unknown'),
+                classification_confidence=classification.get('confidence', 0),
+                extracted_fields=json.dumps(extracted_fields),
+                confidence_score=overall_confidence,
+            )
+            db.session.add(analysis_record)
+            db.session.commit()
+            
+            response = {
+                'success': True,
+                'analysis': {
+                    'ocr': {
+                        'text': ocr_text,
+                        'confidence': ocr_confidence,
+                        'error': None
+                    },
+                    'classification': {
+                        'type': classification.get('type', 'unknown'),
+                        'confidence': classification.get('confidence', 0),
+                        'keywords_matched': classification.get('keywords_matched', [])
+                    },
+                    'extracted_fields': {
+                        'fields': extracted_fields,
+                        'confidence': field_confidence,
+                        'field_count': len(extracted_fields),
+                        'warnings': []
+                    },
+                    'confidence_score': overall_confidence,
+                    'processing_time_ms': processing_time
+                }
+            }
+            
+            return jsonify(response), 201
+            
+        finally:
+            # Clean up temp file
+            if os.path.exists(temp_file_path):
+                try:
+                    os.remove(temp_file_path)
+                except:
+                    pass
+    
+    except Exception as e:
+        logging.error(f"Document analysis failed: {e}", exc_info=True)
+        return jsonify({'error': f'Analysis failed: {str(e)}'}), 500
+
+
+@app.route('/api/claims/<int:claim_id>/extract-fields', methods=['POST'])
+def extract_fields_endpoint(claim_id):
+    """
+    Extract fields from text or file.
+    
+    Accepts JSON with 'text' field, or multipart form with 'file'.
+    """
+    if not OCR_AVAILABLE:
+        return jsonify({'error': 'OCR service not available'}), 503
+    
+    claim = Claim.query.get_or_404(claim_id)
+    
+    # Determine input source
+    text_input = None
+    
+    # Check for JSON body with text
+    if request.is_json:
+        data = request.get_json()
+        text_input = data.get('text', '').strip()
+    
+    # Check for file upload
+    elif 'file' in request.files:
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+        if not allowed_file(file.filename):
+            return jsonify({'error': 'Only PDF, PNG, JPG files allowed'}), 400
+        
+        # Save file temporarily and extract text
+        claim_folder = os.path.join(app.config['UPLOAD_FOLDER'], str(claim_id))
+        os.makedirs(claim_folder, exist_ok=True)
+        
+        filename = secure_filename(file.filename)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+        temp_filename = f"ocr_temp_{timestamp}_{filename}"
+        temp_file_path = os.path.join(claim_folder, temp_filename)
+        
+        try:
+            file.save(temp_file_path)
+            text_input = extract_text(temp_file_path)
+        finally:
+            if os.path.exists(temp_file_path):
+                try:
+                    os.remove(temp_file_path)
+                except:
+                    pass
+    
+    if not text_input:
+        return jsonify({'error': 'No text or file provided'}), 400
+    
+    if len(text_input) > 50000:
+        return jsonify({'error': 'Text too long (max 50000 chars)'}), 400
+    
+    try:
+        field_result = extract_fields(text_input)
+        return jsonify({
+            'success': True,
+            'extracted_fields': field_result.get('fields', {}),
+            'confidence': field_result.get('confidence', {}),
+            'field_count': len(field_result.get('fields', {}))
+        }), 200
+    
+    except Exception as e:
+        logging.error(f"Field extraction failed: {e}", exc_info=True)
+        return jsonify({'error': f'Extraction failed: {str(e)}'}), 500
 
 @app.route('/uploads/<int:claim_id>/<filename>')
 def serve_file(claim_id, filename):

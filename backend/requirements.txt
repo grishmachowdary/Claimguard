@@ -7,4 +7,8 @@ ReportLab==4.0.4
 fuzzywuzzy==0.18.0
 qrcode==7.4.2
 python-dotenv==1.0.0
+easyocr==1.7.1
+spacy==3.7.2
+python-multipart==0.0.6
+pdf2image==1.16.3
 
