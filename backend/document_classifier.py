@@ -112,13 +112,15 @@ def classify_document(text: str) -> Dict:
         sorted_scores = sorted(scores.values(), reverse=True)
         gap = sorted_scores[0] - sorted_scores[1] if len(sorted_scores) > 1 else sorted_scores[0]
         
-        if gap < 0.1 and sorted_scores[0] < 0.5:
-            # Too close, low confidence
+        # Best-effort classification: only mark as 'unknown' if top score is very low (< 0.3)
+        # Previously too conservative: gap < 0.1 AND score < 0.5 would mark 50% match as unknown
+        if top_score < 0.3:
+            # Very low confidence, ambiguous between multiple types
             confidence = top_score
             result_type = 'unknown'
             matched = []
         else:
-            # Clear winner
+            # Clear winner or decent match
             confidence = min(top_score, 1.0)  # Cap at 1.0
             result_type = top_type
             matched = matched_keywords.get(top_type, [])

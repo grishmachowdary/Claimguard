@@ -617,6 +617,7 @@ def analyze_document(claim_id):
             field_result = extract_fields(ocr_text)
             extracted_fields = field_result.get('fields', {})
             field_confidence = field_result.get('confidence', {})
+            field_warnings = field_result.get('warnings', [])
             
             # Calculate overall confidence
             if ocr_text:
@@ -657,7 +658,7 @@ def analyze_document(claim_id):
                         'fields': extracted_fields,
                         'confidence': field_confidence,
                         'field_count': len(extracted_fields),
-                        'warnings': []
+                        'warnings': field_warnings
                     },
                     'confidence_score': overall_confidence,
                     'processing_time_ms': processing_time
@@ -738,6 +739,7 @@ def extract_fields_endpoint(claim_id):
             'success': True,
             'extracted_fields': field_result.get('fields', {}),
             'confidence': field_result.get('confidence', {}),
+            'warnings': field_result.get('warnings', []),
             'field_count': len(field_result.get('fields', {}))
         }), 200
     

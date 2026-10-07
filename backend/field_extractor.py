@@ -98,28 +98,41 @@ def extract_fields(text: str) -> Dict:
     
     Also returns confidence dict with same structure, values 0.0-1.0.
     
+    Includes 'warnings' list to surface issues like NER truncation.
+    
     Args:
         text: OCR or manually provided text
         
     Returns:
-        {'fields': {field_name: value, ...}, 'confidence': {field_name: score, ...}}
+        {'fields': {field_name: value, ...}, 'confidence': {field_name: score, ...}, 'warnings': [...]}
     """
     
     if not text or not isinstance(text, str):
-        return {'fields': {}, 'confidence': {}}
+        return {'fields': {}, 'confidence': {}, 'warnings': []}
     
     text = text.strip()
     if not text:
-        return {'fields': {}, 'confidence': {}}
+        return {'fields': {}, 'confidence': {}, 'warnings': []}
     
     fields = {}
     confidence = {}
+    warnings = []
+    
+    # Track if NER was applied or skipped
+    ner_applied = False
     
     # ─── CLAIMANT NAME (spaCy PERSON entity) ───
     nlp = get_nlp()
     if nlp:
         try:
-            doc = nlp(text[:5000])  # Limit to first 5000 chars for performance
+            # Check if text exceeds NER limit
+            text_for_ner = text[:5000]
+            ner_applied = True
+            if len(text) > 5000:
+                warnings.append(f"Document truncated to first 5000 chars for NER processing. "
+                              f"Full text is {len(text)} chars; some names may have been missed.")
+            
+            doc = nlp(text_for_ner)
             persons = [ent.text for ent in doc.ents if ent.label_ == 'PERSON']
             if persons:
                 fields['claimant_name'] = persons[0]
@@ -131,9 +144,12 @@ def extract_fields(text: str) -> Dict:
             logger.warning(f"spaCy NER failed: {e}")
             fields['claimant_name'] = None
             confidence['claimant_name'] = 0.0
+            ner_applied = False
     else:
         fields['claimant_name'] = None
         confidence['claimant_name'] = 0.0
+        if len(text) > 100:
+            warnings.append("spaCy model not available; claimant_name extracted via regex only (lower confidence)")
     
     # ─── POLICY NUMBER (regex) ───
     policy_match = re.search(r'(?:policy\s+(?:number|no\.?|#)?\s*)?([A-Z]{2,4}[\d\-]{6,15})', text, re.IGNORECASE)
@@ -219,9 +235,10 @@ def extract_fields(text: str) -> Dict:
         confidence['incident_date'] = 0.0
     
     # ─── HOSPITAL/PROVIDER NAME (spaCy ORG entity) ───
-    if nlp:
+    if nlp and ner_applied:
         try:
-            doc = nlp(text[:5000])
+            text_for_ner = text[:5000]
+            doc = nlp(text_for_ner)
             orgs = [ent.text for ent in doc.ents if ent.label_ == 'ORG']
             if orgs:
                 fields['hospital_name'] = orgs[0]
@@ -274,5 +291,6 @@ def extract_fields(text: str) -> Dict:
     
     return {
         'fields': fields,
-        'confidence': confidence
+        'confidence': confidence,
+        'warnings': warnings
     }

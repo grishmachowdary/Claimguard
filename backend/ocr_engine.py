@@ -5,7 +5,6 @@ Provides singleton-based lazy loading of EasyOCR models to avoid
 startup overhead. Supports both images and PDFs.
 """
 
-import easyocr
 import logging
 import os
 from pathlib import Path
@@ -14,10 +13,17 @@ from typing import Optional, Dict, List
 logger = logging.getLogger(__name__)
 
 # Singleton instance
-_reader: Optional[easyocr.Reader] = None
+_reader: Optional['easyocr.Reader'] = None
+_easyocr_available = False
+
+try:
+    import easyocr
+    _easyocr_available = True
+except ImportError:
+    logger.warning("easyocr not installed; OCR functions will not work until package is installed")
 
 
-def get_reader() -> easyocr.Reader:
+def get_reader() -> Optional['easyocr.Reader']:
     """
     Get or initialize the EasyOCR reader singleton.
     
@@ -25,9 +31,16 @@ def get_reader() -> easyocr.Reader:
     subsequent calls return cached instance.
     
     Returns:
-        easyocr.Reader: Initialized OCR reader
+        easyocr.Reader: Initialized OCR reader, or None if easyocr is not available
+        
+    Raises:
+        RuntimeError: If easyocr is not installed
     """
     global _reader
+    
+    if not _easyocr_available:
+        raise RuntimeError("easyocr is not installed. Install with: pip install easyocr")
+    
     if _reader is None:
         logger.info("Initializing EasyOCR reader (first run, ~2-3 seconds)...")
         _reader = easyocr.Reader(['en'], gpu=False)
@@ -64,7 +77,8 @@ def extract_text(image_path: str) -> str:
         try:
             from pdf2image import convert_from_path
             logger.info(f"Converting PDF to images: {image_path}")
-            pages = convert_from_path(image_path)
+            # Add timeout (30 seconds per page) to prevent hanging on corrupted PDFs
+            pages = convert_from_path(image_path, timeout=30, first_page=1, last_page=None)
             all_text = []
             
             for page_num, page in enumerate(pages, 1):
