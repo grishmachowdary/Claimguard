@@ -490,6 +490,68 @@ def validate_claim_endpoint(claim_id):
     claim.ai_report = json.dumps(ai_report)
     db.session.commit()
 
+    # ── MAP TO HUMAN-FRIENDLY GROUPED FORMAT ─────────────────────────────────
+    # Build the grouped response for the frontend UI
+    missing_documents = []
+    data_issues = []
+    warnings_list = []
+    
+    for v in violations:
+        rule = next((r for r in all_rules if r.name == v['rule_name']), None)
+        
+        if rule and rule.rule_type == 'document':
+            # Missing documents
+            missing_documents.append({
+                'name': rule.name,
+                'reason': rule.label or f'Missing required document: {rule.name}',
+                'action': 'upload_document'
+            })
+        elif rule and rule.rule_type in ['field', 'consistency']:
+            # Data issues
+            data_issues.append({
+                'field': v['rule_name'],
+                'value': form_data.get(v['rule_name']),
+                'message': v['message'],
+                'suggestion': v['suggestion'] or 'Please review and correct this field.',
+                'action': 'edit_field'
+            })
+        
+        # Low-severity violations become warnings
+        if v.get('severity') == 'low':
+            warnings_list.append({
+                'message': v['message'],
+                'suggestion': v['suggestion'] or 'You may want to review this.',
+                'action': 'review'
+            })
+    
+    # Determine status
+    if final_score >= 80:
+        grouped_status = 'approved'
+    elif final_score >= 50 and len(violations) == 0:
+        grouped_status = 'ready'
+    else:
+        grouped_status = 'needs_attention'
+    
+    # Build summary
+    doc_count = len([d for d in uploaded_docs if d in [r.name for r in doc_rules]])
+    doc_total = len(required_docs)
+    field_count = filled_fields
+    field_total = total_fields
+    
+    human_friendly_response = {
+        'status': grouped_status,
+        'summary': {
+            'documents_uploaded': doc_count,
+            'documents_total': doc_total,
+            'fields_filled': field_count,
+            'fields_total': field_total,
+            'issues_count': len(violations)
+        },
+        'missing_documents': missing_documents,
+        'data_issues': data_issues,
+        'warnings': warnings_list
+    }
+
     result = {'readiness_score': final_score,
               'readiness_label': readiness_label,
               'breakdown': json.loads(claim.score_breakdown),
@@ -502,7 +564,13 @@ def validate_claim_endpoint(claim_id):
               },
               'overall_risk': overall_risk,
               'violations': violations,
-              'ai_report': ai_report}
+              'ai_report': ai_report,
+              # Add new human-friendly grouped format
+              'status': human_friendly_response['status'],
+              'summary': human_friendly_response['summary'],
+              'missing_documents': human_friendly_response['missing_documents'],
+              'data_issues': human_friendly_response['data_issues'],
+              'warnings': human_friendly_response['warnings']}
     return jsonify(result)
 
 @app.route('/api/claims/<int:claim_id>/report', methods=['GET'])

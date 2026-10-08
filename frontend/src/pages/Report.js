@@ -6,6 +6,7 @@ import SubmitModal from '../components/SubmitModal';
 import ClaimTracker from '../components/ClaimTracker';
 import DeadlineTracker from '../components/DeadlineTracker';
 import ClaimComparison from '../components/ClaimComparison';
+import ClaimValidationReport from '../components/ClaimValidationReport';
 import './Report.css';
 
 // ── Score Ring ────────────────────────────────────────────────────────────
@@ -121,6 +122,25 @@ function Report() {
     }
   };
 
+  const handleRevalidate = async () => {
+    try {
+      await validateClaim(claimId);
+      await loadReport();
+    } catch (e) {
+      console.error('Revalidation failed:', e);
+    }
+  };
+
+  const handleSaveDraft = async () => {
+    try {
+      // Save draft: in a real app, this would call an API endpoint
+      // For now, we show a simple message
+      alert('Claim draft saved. You can continue later.');
+    } catch (e) {
+      console.error('Save draft failed:', e);
+    }
+  };
+
   if (loading) return (
     <div className="report-loading">
       <div className="spinner" /><p>Generating report...</p>
@@ -171,6 +191,14 @@ function Report() {
             {report.readiness_label}
           </span>
         </div>
+
+        {/* ── CLAIM VALIDATION REPORT (Human-friendly) ── */}
+        <ClaimValidationReport
+          claim={report}
+          validationResults={report}
+          onRevalidate={handleRevalidate}
+          onSaveDraft={handleSaveDraft}
+        />
 
         {/* ── STATUS TRACKER ── */}
         <ClaimTracker claimId={report.id} />

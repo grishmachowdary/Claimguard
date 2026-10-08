@@ -1,0 +1,342 @@
+/* ── ClaimValidationReport Component Styles ─────────────────────────────────── */
+
+.cvr-container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 1.5rem;
+  font-family: inherit;
+}
+
+.cvr-empty {
+  text-align: center;
+  padding: 2rem;
+  color: #94a3b8;
+  font-size: 0.95rem;
+}
+
+/* ── Status Banner ────────────────────────────────────────────────────────── */
+
+.cvr-banner {
+  border-radius: 12px;
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  border: 2px solid;
+}
+
+.cvr-banner-icon {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+}
+
+.cvr-banner-content {
+  flex: 1;
+}
+
+.cvr-banner-title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+  line-height: 1.4;
+}
+
+.cvr-banner.approved,
+.cvr-banner.ready {
+  background-color: #dcfce7;
+  border-color: #22c55e;
+  color: #166534;
+}
+
+.cvr-banner.needs_attention {
+  background-color: #fef9c3;
+  border-color: #f59e0b;
+  color: #92400e;
+}
+
+/* ── Summary Card ─────────────────────────────────────────────────────────── */
+
+.cvr-summary-card {
+  background-color: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.cvr-summary-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #64748b;
+  margin: 0 0 1rem 0;
+}
+
+.cvr-summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+  gap: 1rem;
+}
+
+.cvr-summary-label {
+  flex: 1;
+}
+
+.cvr-summary-text {
+  display: block;
+  font-size: 0.9rem;
+  color: #334155;
+  font-weight: 500;
+}
+
+.cvr-summary-progress {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex: 0 0 auto;
+}
+
+.cvr-progress-bar-track {
+  height: 8px;
+  background-color: #e2e8f0;
+  border-radius: 4px;
+  width: 120px;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.cvr-progress-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  background-color: #22c55e;
+  transition: width 0.3s ease;
+}
+
+.cvr-issues-count {
+  font-weight: 600;
+  font-size: 0.875rem;
+  min-width: 80px;
+  text-align: right;
+}
+
+.cvr-issues-count.has-issues {
+  color: #ef4444;
+}
+
+.cvr-issues-count.no-issues {
+  color: #22c55e;
+}
+
+/* ── Issues Groups ────────────────────────────────────────────────────────── */
+
+.cvr-group {
+  margin-bottom: 2rem;
+}
+
+.cvr-group-header {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #64748b;
+  margin: 0 0 0.75rem 0;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid #e2e8f0;
+}
+
+/* ── Issue Card ───────────────────────────────────────────────────────────── */
+
+.cvr-issue-card {
+  background-color: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 0.75rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.cvr-issue-icon {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
+.cvr-issue-body {
+  flex: 1;
+}
+
+.cvr-issue-name {
+  font-weight: 600;
+  color: #1e293b;
+  margin: 0 0 0.25rem 0;
+  font-size: 0.95rem;
+}
+
+.cvr-issue-message {
+  color: #475569;
+  font-size: 0.9rem;
+  margin: 0 0 0.25rem 0;
+  line-height: 1.4;
+}
+
+.cvr-issue-suggestion {
+  color: #94a3b8;
+  font-size: 0.85rem;
+  font-style: italic;
+  margin: 0 0 0.75rem 0;
+  line-height: 1.3;
+}
+
+/* ── Buttons ──────────────────────────────────────────────────────────────── */
+
+.cvr-btn {
+  display: inline-block;
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  font-weight: 500;
+  font-size: 0.875rem;
+  border: none;
+  cursor: pointer;
+  min-height: 44px;
+  min-width: 44px;
+  transition: opacity 0.2s ease, transform 0.15s ease;
+}
+
+.cvr-btn:hover {
+  opacity: 0.85;
+  transform: translateY(-1px);
+}
+
+.cvr-btn:active {
+  transform: translateY(0);
+}
+
+.cvr-btn-upload {
+  background-color: #f59e0b;
+  color: #fff;
+}
+
+.cvr-btn-fix {
+  background-color: #ef4444;
+  color: #fff;
+}
+
+.cvr-btn-review {
+  background-color: #3b82f6;
+  color: #fff;
+}
+
+.cvr-btn-revalidate {
+  background-color: #1e293b;
+  color: #fff;
+  padding: 0.75rem 1.5rem;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 1rem;
+  border: none;
+  cursor: pointer;
+  min-height: 44px;
+  transition: opacity 0.2s ease, transform 0.15s ease;
+}
+
+.cvr-btn-revalidate:hover {
+  opacity: 0.85;
+  transform: translateY(-1px);
+}
+
+.cvr-btn-revalidate:active {
+  transform: translateY(0);
+}
+
+.cvr-btn-save {
+  background-color: transparent;
+  color: #64748b;
+  border: 2px solid #e2e8f0;
+  padding: 0.75rem 1.5rem;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 1rem;
+  cursor: pointer;
+  min-height: 44px;
+  transition: all 0.2s ease;
+}
+
+.cvr-btn-save:hover {
+  border-color: #cbd5e1;
+  color: #475569;
+  background-color: #f8fafc;
+  transform: translateY(-1px);
+}
+
+.cvr-btn-save:active {
+  transform: translateY(0);
+}
+
+/* ── Next Steps ───────────────────────────────────────────────────────────── */
+
+.cvr-next-steps {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 2px solid #e2e8f0;
+}
+
+/* ── Mobile Responsive ────────────────────────────────────────────────────── */
+
+@media (max-width: 600px) {
+  .cvr-container {
+    padding: 1rem;
+  }
+
+  .cvr-banner {
+    flex-direction: column;
+    align-items: flex-start;
+    text-align: left;
+  }
+
+  .cvr-banner-icon {
+    font-size: 1.25rem;
+  }
+
+  .cvr-banner-title {
+    font-size: 0.95rem;
+  }
+
+  .cvr-summary-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+
+  .cvr-progress-bar-track {
+    width: 100%;
+  }
+
+  .cvr-issue-card {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .cvr-issue-icon {
+    margin-top: 0;
+  }
+
+  .cvr-next-steps {
+    flex-direction: column;
+  }
+
+  .cvr-btn,
+  .cvr-btn-revalidate,
+  .cvr-btn-save {
+    width: 100%;
+  }
+}
