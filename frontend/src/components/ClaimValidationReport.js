@@ -189,7 +189,7 @@ function ClaimValidationReport({
                 <div className="cvr-issue-body">
                   <h4 className="cvr-issue-name">{fieldLabel}</h4>
                   <p className="cvr-issue-message">{issue.message || 'There is an issue with this field.'}</p>
-                  {issue.suggestion && (
+                  {issue.suggestion && issue.suggestion.trim() && (
                     <p className="cvr-issue-suggestion">{issue.suggestion}</p>
                   )}
                   <button 
@@ -214,7 +214,7 @@ function ClaimValidationReport({
               <span className="cvr-issue-icon">ℹ️</span>
               <div className="cvr-issue-body">
                 <p className="cvr-issue-message">{warning.message || 'Please review this item.'}</p>
-                {warning.suggestion && (
+                {warning.suggestion && warning.suggestion.trim() && (
                   <p className="cvr-issue-suggestion">{warning.suggestion}</p>
                 )}
                 <button 

@@ -533,7 +533,8 @@ def validate_claim_endpoint(claim_id):
         grouped_status = 'needs_attention'
     
     # Build summary
-    doc_count = len([d for d in uploaded_docs if d in [r.name for r in doc_rules]])
+    # Count ALL uploaded documents, not just those matching doc_rules
+    doc_count = len(uploaded_docs)
     doc_total = len(required_docs)
     field_count = filled_fields
     field_total = total_fields
