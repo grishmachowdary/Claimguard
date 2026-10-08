@@ -1,11 +1,24 @@
 from datetime import datetime
 import json
 
+# Import Phase 4 validators
+try:
+    from data_validator import validate_field
+    from consistency_validator import validate_consistency
+    from fraud_detector import detect_fraud
+    VALIDATORS_AVAILABLE = True
+except ImportError:
+    VALIDATORS_AVAILABLE = False
+
+
 def validate_claim(claim):
     # Import inside function to avoid circular import issues
-    from app import db, Rule, Violation, InsuranceType
+    from app import db, Rule, Violation, InsuranceType, ClaimDocumentAnalysis
 
     violations = []
+    field_errors = []
+    consistency_issues = []
+    fraud_detection = {'fraud_score': 0.0, 'risk_level': 'low', 'flags': []}
 
     # Get all rules for this insurance type
     all_rules        = Rule.query.filter_by(insurance_type_id=claim.insurance_type_id).all()
@@ -72,9 +85,64 @@ def validate_claim(claim):
 
     consistency_score = max(0, consistency_score)
 
-    # ── FINAL SCORE ──────────────────────────────────────────────────────
-    final_score = round(document_score + field_score + consistency_score)
-    final_score = max(0, min(100, final_score))
+    # ── PHASE 4: DATA QUALITY & FRAUD DETECTION ──────────────────────────
+    data_quality_adjustment = 0
+    if VALIDATORS_AVAILABLE:
+        # Validate individual fields
+        for field_name, field_value in form_data.items():
+            if field_value:
+                field_result = validate_field(field_name, field_value)
+                if not field_result['valid']:
+                    for error in field_result['errors']:
+                        field_errors.append(error)
+                        # Penalize based on severity
+                        if error['severity'] == 'HIGH':
+                            data_quality_adjustment -= 10
+                        elif error['severity'] == 'MEDIUM':
+                            data_quality_adjustment -= 5
+                        elif error['severity'] == 'LOW':
+                            data_quality_adjustment -= 2
+        
+        # Validate cross-field consistency (Phase 4)
+        insurance_code = ins_type.code if ins_type else None
+        consistency_result = validate_consistency(form_data, insurance_code)
+        if not consistency_result['valid']:
+            for error in consistency_result['errors']:
+                consistency_issues.append(error)
+                if error['severity'] == 'HIGH':
+                    data_quality_adjustment -= 10
+                elif error['severity'] == 'MEDIUM':
+                    data_quality_adjustment -= 5
+        
+        # Warnings don't block but reduce score
+        for warning in consistency_result.get('warnings', []):
+            consistency_issues.append(warning)
+            if warning['severity'] == 'MEDIUM':
+                data_quality_adjustment -= 2
+            elif warning['severity'] == 'LOW':
+                data_quality_adjustment -= 1
+        
+        # Detect fraud patterns
+        ocr_confidence = 0.5  # default
+        try:
+            latest_analysis = ClaimDocumentAnalysis.query.filter_by(claim_id=claim.id).order_by(
+                ClaimDocumentAnalysis.analysis_timestamp.desc()
+            ).first()
+            if latest_analysis and latest_analysis.ocr_confidence:
+                ocr_confidence = latest_analysis.ocr_confidence
+        except Exception:
+            pass
+        
+        fraud_detection = detect_fraud(
+            ocr_confidence=ocr_confidence,
+            extracted_fields=form_data,
+            document_types=uploaded_docs,
+            insurance_type=insurance_code
+        )
+
+    # ── FINAL SCORE WITH DATA QUALITY ADJUSTMENT ──────────────────────────
+    final_score = document_score + field_score + consistency_score + data_quality_adjustment
+    final_score = round(max(0, min(100, final_score)))
 
     if final_score >= 80:
         readiness_label = 'Ready to Submit'
@@ -89,6 +157,7 @@ def validate_claim(claim):
         'document':    round(document_score, 1),
         'field':       round(field_score, 1),
         'consistency': round(consistency_score, 1),
+        'data_quality_adjustment': data_quality_adjustment,
         'doc_earned':  earned_weight,
         'doc_max':     max_doc_weight,
         'doc_pct':     round(earned_weight / max_doc_weight * 100, 1) if max_doc_weight else 0,
@@ -115,7 +184,10 @@ def validate_claim(claim):
         'score':          final_score,
         'breakdown':      json.loads(claim.score_breakdown),
         'readiness_label': readiness_label,
-        'violations':     violations
+        'violations':     violations,
+        'field_errors':   field_errors,
+        'consistency_issues': consistency_issues,
+        'fraud_detection': fraud_detection
     }
 
 
