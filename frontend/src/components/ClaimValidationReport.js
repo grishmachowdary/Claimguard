@@ -38,9 +38,9 @@ function ClaimValidationReport({
     );
   }
 
-  // Action handlers
+  // Action handlers with defensive callback checking
   const handleUploadDocument = (docName) => {
-    if (onUploadDocument) {
+    if (typeof onUploadDocument === 'function') {
       onUploadDocument(docName);
     } else if (claimId) {
       // Default behavior: navigate to documents page
@@ -49,7 +49,7 @@ function ClaimValidationReport({
   };
 
   const handleFixField = (fieldName) => {
-    if (onFixField) {
+    if (typeof onFixField === 'function') {
       onFixField(fieldName);
     } else if (claimId) {
       // Default behavior: navigate to details page
@@ -58,7 +58,7 @@ function ClaimValidationReport({
   };
 
   const handleReviewWarning = (warningIndex) => {
-    if (onReviewWarning) {
+    if (typeof onReviewWarning === 'function') {
       onReviewWarning(warningIndex);
     }
   };
@@ -73,8 +73,14 @@ function ClaimValidationReport({
 
   const statusBanner = statusMessages[status] || statusMessages.needs_attention;
 
-  // Extract summary data
-  const summary = validationResults.summary || {
+  // Extract summary data with safe field access
+  const summary = validationResults.summary ? {
+    documents_uploaded: validationResults.summary.documents_uploaded ?? 0,
+    documents_total: validationResults.summary.documents_total ?? 0,
+    fields_filled: validationResults.summary.fields_filled ?? 0,
+    fields_total: validationResults.summary.fields_total ?? 0,
+    issues_count: validationResults.summary.issues_count ?? 0,
+  } : {
     documents_uploaded: 0,
     documents_total: 0,
     fields_filled: 0,
@@ -168,8 +174,11 @@ function ClaimValidationReport({
         <section className="cvr-group">
           <h3 className="cvr-group-header">DATA ISSUES ({dataIssues.length})</h3>
           {dataIssues.map((issue, idx) => {
+            // Validate field exists and is a string before processing
+            const field = issue.field && typeof issue.field === 'string' ? issue.field : 'unknown';
+            
             // Format field name: replace underscores with spaces, capitalize
-            const fieldLabel = (issue.field || 'unknown')
+            const fieldLabel = field
               .split('_')
               .map(word => word.charAt(0).toUpperCase() + word.slice(1))
               .join(' ');
@@ -185,7 +194,7 @@ function ClaimValidationReport({
                   )}
                   <button 
                     className="cvr-btn cvr-btn-fix"
-                    onClick={() => handleFixField(issue.field)}
+                    onClick={() => field !== 'unknown' && handleFixField(field)}
                   >
                     Fix This
                   </button>

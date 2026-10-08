@@ -206,6 +206,7 @@
   cursor: pointer;
   min-height: 44px;
   min-width: 44px;
+  box-sizing: border-box;
   transition: opacity 0.2s ease, transform 0.15s ease;
 }
 
@@ -243,6 +244,7 @@
   border: none;
   cursor: pointer;
   min-height: 44px;
+  box-sizing: border-box;
   transition: opacity 0.2s ease, transform 0.15s ease;
 }
 
@@ -265,6 +267,7 @@
   font-size: 1rem;
   cursor: pointer;
   min-height: 44px;
+  box-sizing: border-box;
   transition: all 0.2s ease;
 }
 
