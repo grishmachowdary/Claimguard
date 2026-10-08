@@ -527,7 +527,7 @@ def validate_claim_endpoint(claim_id):
     # Determine status
     if final_score >= 80:
         grouped_status = 'approved'
-    elif final_score >= 50 and len(violations) == 0:
+    elif len(violations) == 0:
         grouped_status = 'ready'
     else:
         grouped_status = 'needs_attention'

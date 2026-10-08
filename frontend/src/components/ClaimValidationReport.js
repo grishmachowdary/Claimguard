@@ -1,4 +1,5 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import './ClaimValidationReport.css';
 
 /**
@@ -8,10 +9,25 @@ import './ClaimValidationReport.css';
  * Props:
  *   - claim: the claim object (optional, for reference)
  *   - validationResults: the validation response from /api/claims/<id>/validate
+ *   - claimId: the claim ID for navigation
  *   - onRevalidate: callback function to rerun validation
  *   - onSaveDraft: callback function to save as draft
+ *   - onUploadDocument: callback function when Upload Document is clicked (optional)
+ *   - onFixField: callback function when Fix This is clicked (optional)
+ *   - onReviewWarning: callback function when Review is clicked (optional)
  */
-function ClaimValidationReport({ claim, validationResults, onRevalidate, onSaveDraft }) {
+function ClaimValidationReport({ 
+  claim, 
+  validationResults, 
+  claimId,
+  onRevalidate, 
+  onSaveDraft,
+  onUploadDocument,
+  onFixField,
+  onReviewWarning
+}) {
+  const navigate = useNavigate();
+
   if (!validationResults) {
     return (
       <section className="cvr-container">
@@ -21,6 +37,31 @@ function ClaimValidationReport({ claim, validationResults, onRevalidate, onSaveD
       </section>
     );
   }
+
+  // Action handlers
+  const handleUploadDocument = (docName) => {
+    if (onUploadDocument) {
+      onUploadDocument(docName);
+    } else if (claimId) {
+      // Default behavior: navigate to documents page
+      navigate(`/documents/${claimId}`, { state: { focusDoc: docName } });
+    }
+  };
+
+  const handleFixField = (fieldName) => {
+    if (onFixField) {
+      onFixField(fieldName);
+    } else if (claimId) {
+      // Default behavior: navigate to details page
+      navigate(`/details/${claimId}`, { state: { focusField: fieldName } });
+    }
+  };
+
+  const handleReviewWarning = (warningIndex) => {
+    if (onReviewWarning) {
+      onReviewWarning(warningIndex);
+    }
+  };
 
   // Determine status and color
   const status = validationResults.status || 'needs_attention';
@@ -110,7 +151,12 @@ function ClaimValidationReport({ claim, validationResults, onRevalidate, onSaveD
               <div className="cvr-issue-body">
                 <h4 className="cvr-issue-name">{doc.name || 'Unnamed Document'}</h4>
                 <p className="cvr-issue-message">{doc.reason || 'This document is required for your claim.'}</p>
-                <button className="cvr-btn cvr-btn-upload">Upload Document</button>
+                <button 
+                  className="cvr-btn cvr-btn-upload"
+                  onClick={() => handleUploadDocument(doc.name)}
+                >
+                  Upload Document
+                </button>
               </div>
             </article>
           ))}
@@ -137,7 +183,12 @@ function ClaimValidationReport({ claim, validationResults, onRevalidate, onSaveD
                   {issue.suggestion && (
                     <p className="cvr-issue-suggestion">{issue.suggestion}</p>
                   )}
-                  <button className="cvr-btn cvr-btn-fix">Fix This</button>
+                  <button 
+                    className="cvr-btn cvr-btn-fix"
+                    onClick={() => handleFixField(issue.field)}
+                  >
+                    Fix This
+                  </button>
                 </div>
               </article>
             );
@@ -157,7 +208,12 @@ function ClaimValidationReport({ claim, validationResults, onRevalidate, onSaveD
                 {warning.suggestion && (
                   <p className="cvr-issue-suggestion">{warning.suggestion}</p>
                 )}
-                <button className="cvr-btn cvr-btn-review">Review</button>
+                <button 
+                  className="cvr-btn cvr-btn-review"
+                  onClick={() => handleReviewWarning(idx)}
+                >
+                  Review
+                </button>
               </div>
             </article>
           ))}

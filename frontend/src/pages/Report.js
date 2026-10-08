@@ -196,6 +196,7 @@ function Report() {
         <ClaimValidationReport
           claim={report}
           validationResults={report}
+          claimId={claimId}
           onRevalidate={handleRevalidate}
           onSaveDraft={handleSaveDraft}
         />
