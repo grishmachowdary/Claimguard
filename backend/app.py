@@ -7,15 +7,30 @@ from werkzeug.utils import secure_filename
 import bcrypt
 import json
 import os
+import logging
+import time
+from config import get_config
+
+# Document intelligence modules (lazy-loaded with error handling)
+try:
+    from ocr_engine import extract_text, extract_text_with_boxes
+    from field_extractor import extract_fields
+    from document_classifier import classify_document
+    OCR_AVAILABLE = True
+except ImportError as e:
+    OCR_AVAILABLE = False
+    logging.warning(f'Document intelligence modules not available: {e}')
 
 app = Flask(__name__)
 CORS(app)
 
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///claimguard.db'
+# Load configuration based on environment
+config = get_config()
+app.config.from_object(config)
+
+# Ensure essential config keys exist
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'claimguard-dev-secret-key')
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=7)
-app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(__file__), 'uploads')
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 ALLOWED_EXTENSIONS = {'pdf', 'png', 'jpg', 'jpeg'}
 
@@ -116,6 +131,19 @@ class ClaimDocument(db.Model):
     file_size = db.Column(db.Integer)
     uploaded_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+class ClaimDocumentAnalysis(db.Model):
+    __tablename__ = 'claim_document_analyses'
+    id = db.Column(db.Integer, primary_key=True)
+    claim_id = db.Column(db.Integer, db.ForeignKey('claims.id'))
+    document_id = db.Column(db.Integer, db.ForeignKey('claim_documents.id'))
+    ocr_text = db.Column(db.Text)
+    ocr_confidence = db.Column(db.Float)
+    document_type = db.Column(db.String(100))
+    classification_confidence = db.Column(db.Float)
+    extracted_fields = db.Column(db.Text)
+    confidence_score = db.Column(db.Float)
+    analysis_timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+
 # ── Auth Routes ──────────────────────────────────────────────────────────────
 
 @app.route('/api/auth/register', methods=['POST'])
@@ -173,6 +201,47 @@ def get_me():
     return jsonify({'id': user.id, 'full_name': user.full_name, 'email': user.email, 'role': user.role, 'company': user.company})
 
 # ── Routes ───────────────────────────────────────────────────────────────────
+
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    """Health check endpoint for monitoring and load balancers."""
+    try:
+        # Check database connection
+        db.session.execute('SELECT 1')
+        db_status = 'healthy'
+    except Exception as e:
+        db_status = 'unhealthy'
+        logging.error(f'Database health check failed: {e}')
+    
+    return jsonify({
+        'status': 'healthy' if db_status == 'healthy' else 'degraded',
+        'database': db_status,
+        'version': '2.0.0',
+        'environment': app.config.get('ENV', 'unknown'),
+        'timestamp': datetime.utcnow().isoformat()
+    }), 200 if db_status == 'healthy' else 503
+
+@app.route('/api/status', methods=['GET'])
+@jwt_required()
+def system_status():
+    """System status endpoint (requires authentication)."""
+    try:
+        total_claims = Claim.query.count()
+        total_users = User.query.count()
+        
+        return jsonify({
+            'status': 'running',
+            'version': '2.0.0',
+            'environment': app.config.get('ENV'),
+            'database': 'connected',
+            'ocr': 'available' if OCR_AVAILABLE else 'unavailable',
+            'total_claims': total_claims,
+            'total_users': total_users,
+            'timestamp': datetime.utcnow().isoformat()
+        })
+    except Exception as e:
+        logging.error(f'Status check failed: {e}')
+        return jsonify({'error': 'Status check failed', 'message': str(e) if app.config.get('ENV') != 'production' else 'Internal error'}), 500
 
 @app.route('/api/insurance-types', methods=['GET'])
 def get_insurance_types():
@@ -256,8 +325,17 @@ def update_claim(claim_id):
     return jsonify({'message': 'Claim updated successfully'})
 
 @app.route('/api/claims/<int:claim_id>/validate', methods=['POST'])
-def validate_claim(claim_id):
+def validate_claim_endpoint(claim_id):
     claim = Claim.query.get_or_404(claim_id)
+
+    # Import Phase 4 validators
+    try:
+        from data_validator import validate_field
+        from consistency_validator import validate_consistency
+        from fraud_detector import detect_fraud
+        VALIDATORS_AVAILABLE = True
+    except ImportError:
+        VALIDATORS_AVAILABLE = False
 
     # ── Run rule engine inline ────────────────────────────────────────────
     import json as _json
@@ -272,6 +350,9 @@ def validate_claim(claim_id):
     form_data     = json.loads(claim.form_data)     if claim.form_data     else {}
 
     violations = []
+    field_errors = []
+    consistency_issues = []
+    fraud_detection = {'fraud_score': 0.0, 'risk_level': 'low', 'flags': []}
 
     # Document score (40 pts)
     required_docs  = [r for r in doc_rules if r.is_required]
@@ -352,16 +433,82 @@ def validate_claim(claim_id):
                 consistency_score -= add_v('damage_after_sowing', 15)
 
     consistency_score = max(0, consistency_score)
-    final_score = max(0, min(100, round(document_score + field_score + consistency_score)))
+
+    # ── PHASE 4: DATA QUALITY & FRAUD DETECTION ──────────────────────────
+    data_quality_adjustment = 0
+    if VALIDATORS_AVAILABLE:
+        # Validate individual fields
+        for field_name, field_value in form_data.items():
+            if field_value:
+                field_result = validate_field(field_name, field_value)
+                if not field_result['valid']:
+                    for error in field_result['errors']:
+                        field_errors.append(error)
+                        # Penalize based on severity
+                        if error['severity'] == 'HIGH':
+                            data_quality_adjustment -= 10
+                        elif error['severity'] == 'MEDIUM':
+                            data_quality_adjustment -= 5
+                        elif error['severity'] == 'LOW':
+                            data_quality_adjustment -= 2
+        
+        # Validate cross-field consistency (Phase 4)
+        insurance_code = ins_type.code if ins_type else None
+        consistency_result = validate_consistency(form_data, insurance_code)
+        if not consistency_result['valid']:
+            for error in consistency_result['errors']:
+                consistency_issues.append(error)
+                if error['severity'] == 'HIGH':
+                    data_quality_adjustment -= 10
+                elif error['severity'] == 'MEDIUM':
+                    data_quality_adjustment -= 5
+        
+        # Warnings don't block but reduce score
+        for warning in consistency_result.get('warnings', []):
+            consistency_issues.append(warning)
+            if warning['severity'] == 'MEDIUM':
+                data_quality_adjustment -= 2
+            elif warning['severity'] == 'LOW':
+                data_quality_adjustment -= 1
+        
+        # Detect fraud patterns
+        ocr_confidence = 0.5  # default
+        try:
+            latest_analysis = ClaimDocumentAnalysis.query.filter_by(claim_id=claim_id).order_by(
+                ClaimDocumentAnalysis.analysis_timestamp.desc()
+            ).first()
+            if latest_analysis and latest_analysis.ocr_confidence:
+                ocr_confidence = latest_analysis.ocr_confidence
+        except Exception:
+            pass
+        
+        fraud_detection = detect_fraud(
+            ocr_confidence=ocr_confidence,
+            extracted_fields=form_data,
+            document_types=uploaded_docs,
+            insurance_type=insurance_code
+        )
+
+    # ── FINAL SCORE WITH DATA QUALITY ADJUSTMENT ──────────────────────────
+    final_score = document_score + field_score + consistency_score + data_quality_adjustment
+    final_score = max(0, min(100, round(final_score)))
 
     if final_score >= 80:   readiness_label = 'Ready to Submit';   new_status = 'ready'
     elif final_score >= 50: readiness_label = 'Needs Attention';   new_status = 'needs_attention'
     else:                   readiness_label = 'Incomplete';         new_status = 'incomplete'
 
+    # Compute overall risk based on readiness_score and fraud_score
+    if final_score < 50 or fraud_detection['fraud_score'] > 0.6:
+        overall_risk = 'HIGH'
+    elif final_score < 70 or fraud_detection['fraud_score'] > 0.3:
+        overall_risk = 'MEDIUM'
+    else:
+        overall_risk = 'LOW'
+
     claim.readiness_score = final_score
     claim.score_breakdown = json.dumps({
         'document': round(document_score, 1), 'field': round(field_score, 1),
-        'consistency': round(consistency_score, 1),
+        'consistency': round(consistency_score, 1), 'data_quality_adjustment': data_quality_adjustment,
         'doc_earned': earned_weight, 'doc_max': max_doc_weight,
         'doc_pct': round(earned_weight / max_doc_weight * 100, 1) if max_doc_weight else 0,
         'field_filled': filled_fields, 'field_total': total_fields,
@@ -384,11 +531,88 @@ def validate_claim(claim_id):
     claim.ai_report = json.dumps(ai_report)
     db.session.commit()
 
-    result = {'score': final_score,
-              'breakdown': json.loads(claim.score_breakdown),
+    # ── MAP TO HUMAN-FRIENDLY GROUPED FORMAT ─────────────────────────────────
+    # Build the grouped response for the frontend UI
+    missing_documents = []
+    data_issues = []
+    warnings_list = []
+    
+    for v in violations:
+        rule = next((r for r in all_rules if r.name == v['rule_name']), None)
+        
+        if rule and rule.rule_type == 'document':
+            # Missing documents
+            missing_documents.append({
+                'name': rule.name,
+                'reason': rule.label or f'Missing required document: {rule.name}',
+                'action': 'upload_document'
+            })
+        elif rule and rule.rule_type in ['field', 'consistency']:
+            # Data issues
+            data_issues.append({
+                'field': v['rule_name'],
+                'value': form_data.get(v['rule_name']),
+                'message': v['message'],
+                'suggestion': v['suggestion'] or 'Please review and correct this field.',
+                'action': 'edit_field'
+            })
+        
+        # Low-severity violations become warnings
+        if v.get('severity') == 'low':
+            warnings_list.append({
+                'message': v['message'],
+                'suggestion': v['suggestion'] or 'You may want to review this.',
+                'action': 'review'
+            })
+    
+    # Determine status
+    if final_score >= 80:
+        grouped_status = 'approved'
+    elif len(violations) == 0:
+        grouped_status = 'ready'
+    else:
+        grouped_status = 'needs_attention'
+    
+    # Build summary
+    # Count ALL uploaded documents, not just those matching doc_rules
+    doc_count = len(uploaded_docs)
+    doc_total = len(required_docs)
+    field_count = filled_fields
+    field_total = total_fields
+    
+    human_friendly_response = {
+        'status': grouped_status,
+        'summary': {
+            'documents_uploaded': doc_count,
+            'documents_total': doc_total,
+            'fields_filled': field_count,
+            'fields_total': field_total,
+            'issues_count': len(violations)
+        },
+        'missing_documents': missing_documents,
+        'data_issues': data_issues,
+        'warnings': warnings_list
+    }
+
+    result = {'readiness_score': final_score,
               'readiness_label': readiness_label,
+              'breakdown': json.loads(claim.score_breakdown),
+              'field_errors': field_errors,
+              'consistency_issues': consistency_issues,
+              'fraud_detection': {
+                  'fraud_score': fraud_detection['fraud_score'],
+                  'risk_level': fraud_detection['risk_level'],
+                  'flags': fraud_detection['flags']
+              },
+              'overall_risk': overall_risk,
               'violations': violations,
-              'ai_report': ai_report}
+              'ai_report': ai_report,
+              # Add new human-friendly grouped format
+              'status': human_friendly_response['status'],
+              'summary': human_friendly_response['summary'],
+              'missing_documents': human_friendly_response['missing_documents'],
+              'data_issues': human_friendly_response['data_issues'],
+              'warnings': human_friendly_response['warnings']}
     return jsonify(result)
 
 @app.route('/api/claims/<int:claim_id>/report', methods=['GET'])
@@ -531,6 +755,193 @@ def delete_document(claim_id, doc_id):
 
     db.session.commit()
     return jsonify({'message': 'Document deleted successfully'})
+
+# ── Document Intelligence Routes ────────────────────────────────────────────
+
+@app.route('/api/claims/<int:claim_id>/analyze-document', methods=['POST'])
+def analyze_document(claim_id):
+    """
+    Analyze a document: OCR + classification + field extraction.
+    
+    Returns full analysis with OCR text, document type, and extracted fields.
+    """
+    if not OCR_AVAILABLE:
+        return jsonify({'error': 'OCR service not available'}), 503
+    
+    claim = Claim.query.get_or_404(claim_id)
+    
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+    
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+    if not allowed_file(file.filename):
+        return jsonify({'error': 'Only PDF, PNG, JPG files allowed'}), 400
+    
+    # Check file size (max 10MB)
+    file.seek(0, 2)
+    file_size = file.tell()
+    file.seek(0)
+    if file_size > 10 * 1024 * 1024:
+        return jsonify({'error': 'File too large (max 10MB)'}), 400
+    
+    try:
+        # Save file temporarily
+        claim_folder = os.path.join(app.config['UPLOAD_FOLDER'], str(claim_id))
+        os.makedirs(claim_folder, exist_ok=True)
+        
+        filename = secure_filename(file.filename)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+        temp_filename = f"ocr_temp_{timestamp}_{filename}"
+        temp_file_path = os.path.join(claim_folder, temp_filename)
+        
+        file.save(temp_file_path)
+        
+        try:
+            # Run analysis pipeline
+            start_time = time.time()
+            
+            # 1. OCR
+            ocr_text = extract_text(temp_file_path)
+            ocr_confidence = 0.85 if ocr_text else 0.0
+            
+            # 2. Classification
+            classification = classify_document(ocr_text)
+            
+            # 3. Field extraction
+            field_result = extract_fields(ocr_text)
+            extracted_fields = field_result.get('fields', {})
+            field_confidence = field_result.get('confidence', {})
+            field_warnings = field_result.get('warnings', [])
+            
+            # Calculate overall confidence
+            if ocr_text:
+                overall_confidence = (ocr_confidence + classification.get('confidence', 0) + 
+                                    (sum(field_confidence.values()) / len(field_confidence) if field_confidence else 0)) / 3
+            else:
+                overall_confidence = 0.0
+            
+            processing_time = int((time.time() - start_time) * 1000)
+            
+            # Store analysis in database
+            analysis_record = ClaimDocumentAnalysis(
+                claim_id=claim_id,
+                ocr_text=ocr_text,
+                ocr_confidence=ocr_confidence,
+                document_type=classification.get('type', 'unknown'),
+                classification_confidence=classification.get('confidence', 0),
+                extracted_fields=json.dumps(extracted_fields),
+                confidence_score=overall_confidence,
+            )
+            db.session.add(analysis_record)
+            db.session.commit()
+            
+            response = {
+                'success': True,
+                'analysis': {
+                    'ocr': {
+                        'text': ocr_text,
+                        'confidence': ocr_confidence,
+                        'error': None
+                    },
+                    'classification': {
+                        'type': classification.get('type', 'unknown'),
+                        'confidence': classification.get('confidence', 0),
+                        'keywords_matched': classification.get('keywords_matched', [])
+                    },
+                    'extracted_fields': {
+                        'fields': extracted_fields,
+                        'confidence': field_confidence,
+                        'field_count': len(extracted_fields),
+                        'warnings': field_warnings
+                    },
+                    'confidence_score': overall_confidence,
+                    'processing_time_ms': processing_time
+                }
+            }
+            
+            return jsonify(response), 201
+            
+        finally:
+            # Clean up temp file
+            if os.path.exists(temp_file_path):
+                try:
+                    os.remove(temp_file_path)
+                except:
+                    pass
+    
+    except Exception as e:
+        logging.error(f"Document analysis failed: {e}", exc_info=True)
+        return jsonify({'error': f'Analysis failed: {str(e)}'}), 500
+
+
+@app.route('/api/claims/<int:claim_id>/extract-fields', methods=['POST'])
+def extract_fields_endpoint(claim_id):
+    """
+    Extract fields from text or file.
+    
+    Accepts JSON with 'text' field, or multipart form with 'file'.
+    """
+    if not OCR_AVAILABLE:
+        return jsonify({'error': 'OCR service not available'}), 503
+    
+    claim = Claim.query.get_or_404(claim_id)
+    
+    # Determine input source
+    text_input = None
+    
+    # Check for JSON body with text
+    if request.is_json:
+        data = request.get_json()
+        text_input = data.get('text', '').strip()
+    
+    # Check for file upload
+    elif 'file' in request.files:
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+        if not allowed_file(file.filename):
+            return jsonify({'error': 'Only PDF, PNG, JPG files allowed'}), 400
+        
+        # Save file temporarily and extract text
+        claim_folder = os.path.join(app.config['UPLOAD_FOLDER'], str(claim_id))
+        os.makedirs(claim_folder, exist_ok=True)
+        
+        filename = secure_filename(file.filename)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+        temp_filename = f"ocr_temp_{timestamp}_{filename}"
+        temp_file_path = os.path.join(claim_folder, temp_filename)
+        
+        try:
+            file.save(temp_file_path)
+            text_input = extract_text(temp_file_path)
+        finally:
+            if os.path.exists(temp_file_path):
+                try:
+                    os.remove(temp_file_path)
+                except:
+                    pass
+    
+    if not text_input:
+        return jsonify({'error': 'No text or file provided'}), 400
+    
+    if len(text_input) > 50000:
+        return jsonify({'error': 'Text too long (max 50000 chars)'}), 400
+    
+    try:
+        field_result = extract_fields(text_input)
+        return jsonify({
+            'success': True,
+            'extracted_fields': field_result.get('fields', {}),
+            'confidence': field_result.get('confidence', {}),
+            'warnings': field_result.get('warnings', []),
+            'field_count': len(field_result.get('fields', {}))
+        }), 200
+    
+    except Exception as e:
+        logging.error(f"Field extraction failed: {e}", exc_info=True)
+        return jsonify({'error': f'Extraction failed: {str(e)}'}), 500
 
 @app.route('/uploads/<int:claim_id>/<filename>')
 def serve_file(claim_id, filename):
@@ -1034,5 +1445,69 @@ def get_insurer_stats():
         'avg_claim_score': round(sum(scores)/len(scores), 1) if scores else 0,
     })
 
+def seed_default_users():
+    """Seed default test users on first run if no users exist (DEV/TEST ONLY)."""
+    # Only seed in development or testing mode, NOT in production
+    if app.config.get('ENV') not in ['development', 'testing']:
+        return
+    
+    with app.app_context():
+        # Check if any users exist
+        if User.query.first():
+            return  # Users already exist, don't seed
+        
+        # Create default test users
+        test_users = [
+            ('Test Customer', 'customer@test.com', 'password123', 'customer', None),
+            ('Test Agent', 'agent@test.com', 'password123', 'agent', None),
+            ('Test Insurer', 'insurer@test.com', 'password123', 'insurer', 'Test Insurance Co'),
+        ]
+        
+        for full_name, email, password, role, company in test_users:
+            hashed_pw = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+            user = User(full_name=full_name, email=email, password=hashed_pw, role=role, company=company)
+            db.session.add(user)
+        
+        db.session.commit()
+        print("✓ Default test users seeded on first run (DEV mode)")
+
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    # Auto-seed default users on first run (dev/test only)
+    seed_default_users()
+    
+    # In production, use gunicorn instead: gunicorn -w 4 -b 0.0.0.0:5000 app:app
+    if app.config.get('ENV') == 'production':
+        print("⚠️  Running in PRODUCTION mode. Use gunicorn for better performance:")
+        print("    gunicorn -w 4 -b 0.0.0.0:5000 app:app")
+    
+    app.run(debug=app.config.get('ENV') == 'development', port=5000)
+
+# ── Error Handlers ───────────────────────────────────────────────────────────
+
+@app.errorhandler(404)
+def not_found(e):
+    """Handle 404 errors."""
+    return jsonify({'error': 'Not found', 'message': 'The requested resource does not exist'}), 404
+
+@app.errorhandler(403)
+def forbidden(e):
+    """Handle 403 errors."""
+    return jsonify({'error': 'Forbidden', 'message': 'You do not have permission to access this resource'}), 403
+
+@app.errorhandler(500)
+def internal_error(e):
+    """Handle 500 errors (hide details in production)."""
+    logging.error(f'Internal server error: {e}')
+    message = 'Internal server error' if app.config.get('ENV') == 'production' else str(e)
+    return jsonify({'error': 'Internal server error', 'message': message}), 500
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    """Generic exception handler (safe for production)."""
+    logging.error(f'Unhandled exception: {e}')
+    
+    # Don't expose internal errors in production
+    if app.config.get('ENV') == 'production':
+        return jsonify({'error': 'An error occurred', 'message': 'Please try again later'}), 500
+    else:
+        return jsonify({'error': 'Error', 'message': str(e)}), 500

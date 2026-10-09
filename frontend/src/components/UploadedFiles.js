@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import api from '../api';
 import './UploadedFiles.css';
 
 function UploadedFiles({ claimId, documentType, onFilesChange }) {
@@ -12,7 +13,7 @@ function UploadedFiles({ claimId, documentType, onFilesChange }) {
 
   const loadFiles = async () => {
     try {
-      const response = await axios.get(`http://localhost:5000/api/claims/${claimId}/documents`);
+      const response = await axios.get(`${api.defaults.baseURL}/claims/${claimId}/documents`);
       const filtered = response.data.filter(doc => doc.document_type === documentType);
       setFiles(filtered);
       setLoading(false);
@@ -29,7 +30,7 @@ function UploadedFiles({ claimId, documentType, onFilesChange }) {
     if (!window.confirm('Are you sure you want to delete this file?')) return;
 
     try {
-      await axios.delete(`http://localhost:5000/api/claims/${claimId}/documents/${docId}`);
+      await axios.delete(`${api.defaults.baseURL}/claims/${claimId}/documents/${docId}`);
       loadFiles();
     } catch (error) {
       console.error('Error deleting file:', error);
