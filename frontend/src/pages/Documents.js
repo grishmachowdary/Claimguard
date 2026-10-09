@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getRules, createClaim } from '../api';
+import api from '../api';
 import StepProgress from '../components/StepProgress';
 import './Documents.css';
 
@@ -78,7 +79,7 @@ function Documents() {
     formData.append('document_type', docName);
 
     try {
-      const res = await fetch(`http://localhost:5000/api/claims/${claimId}/upload`, {
+      const res = await fetch(`${api.defaults.baseURL}/claims/${claimId}/upload`, {
         method: 'POST',
         body: formData,
       });

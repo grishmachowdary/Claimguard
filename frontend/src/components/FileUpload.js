@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import './FileUpload.css';
+import api from '../api';
 
 function FileUpload({ claimId, documentType, documentLabel, onUploadSuccess }) {
   const [uploading, setUploading] = useState(false);
@@ -30,7 +31,7 @@ function FileUpload({ claimId, documentType, documentLabel, onUploadSuccess }) {
     formData.append('document_type', documentType);
 
     try {
-      const response = await fetch(`http://localhost:5000/api/claims/${claimId}/upload`, {
+      const response = await fetch(`${api.defaults.baseURL}/claims/${claimId}/upload`, {
         method: 'POST',
         body: formData,
       });

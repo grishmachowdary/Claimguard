@@ -1,0 +1,25 @@
+# Optional OCR and NLP dependencies for ClaimGuard
+# Use this file if you need document intelligence features (OCR, field extraction, etc.)
+# 
+# Install with:
+#   pip install -r requirements-ocr.txt
+#
+# Note: These packages are large (~600MB total) and may exceed free tier limits.
+# They are automatically handled gracefully if missing:
+# - OCR will be disabled, but all other claim features work
+# - Field extraction falls back to regex-only mode
+# - App will log warnings but continue running
+
+# Document Intelligence - Optional
+easyocr==1.7.1           # OCR text extraction from images and PDFs (~500MB download)
+spacy==3.7.2             # Named Entity Recognition for field extraction (~100MB)
+pdf2image==1.16.3        # Convert PDF pages to images (lightweight, requires system poppler)
+
+# System Dependency (not pip-installable):
+# - Poppler (for PDF processing)
+#   Linux: apt-get install poppler-utils
+#   Mac: brew install poppler
+#   Windows: choco install poppler
+#
+# spaCy Model (run after installing spacy):
+#   python -m spacy download en_core_web_sm

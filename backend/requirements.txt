@@ -7,8 +7,17 @@ ReportLab==4.0.4
 fuzzywuzzy==0.18.0
 qrcode==7.4.2
 python-dotenv==1.0.0
-easyocr==1.7.1
-spacy==3.7.2
 python-multipart==0.0.6
-pdf2image==1.16.3
+
+# Optional: Document Intelligence (OCR, NER field extraction)
+# For production deployment on Vercel/Render free tier, these are optional
+# Install only if OCR/NER features are needed:
+#   pip install -r requirements.txt
+# Or, for free tier deployment without OCR:
+#   pip install -r requirements.txt --no-deps && pip install Flask Flask-SQLAlchemy Flask-CORS Flask-JWT-Extended bcrypt ReportLab fuzzywuzzy qrcode python-dotenv python-multipart
+# 
+# Optional dependencies (enable selectively):
+# easyocr==1.7.1        # OCR text extraction from images/PDFs (~500MB)
+# spacy==3.7.2          # NER for field extraction (~100MB) + model: python -m spacy download en_core_web_sm
+# pdf2image==1.16.3     # PDF to image conversion (requires system poppler package)
 
