@@ -202,6 +202,47 @@ def get_me():
 
 # ── Routes ───────────────────────────────────────────────────────────────────
 
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    """Health check endpoint for monitoring and load balancers."""
+    try:
+        # Check database connection
+        db.session.execute('SELECT 1')
+        db_status = 'healthy'
+    except Exception as e:
+        db_status = 'unhealthy'
+        logging.error(f'Database health check failed: {e}')
+    
+    return jsonify({
+        'status': 'healthy' if db_status == 'healthy' else 'degraded',
+        'database': db_status,
+        'version': '2.0.0',
+        'environment': app.config.get('ENV', 'unknown'),
+        'timestamp': datetime.utcnow().isoformat()
+    }), 200 if db_status == 'healthy' else 503
+
+@app.route('/api/status', methods=['GET'])
+@jwt_required()
+def system_status():
+    """System status endpoint (requires authentication)."""
+    try:
+        total_claims = Claim.query.count()
+        total_users = User.query.count()
+        
+        return jsonify({
+            'status': 'running',
+            'version': '2.0.0',
+            'environment': app.config.get('ENV'),
+            'database': 'connected',
+            'ocr': 'available' if OCR_AVAILABLE else 'unavailable',
+            'total_claims': total_claims,
+            'total_users': total_users,
+            'timestamp': datetime.utcnow().isoformat()
+        })
+    except Exception as e:
+        logging.error(f'Status check failed: {e}')
+        return jsonify({'error': 'Status check failed', 'message': str(e) if app.config.get('ENV') != 'production' else 'Internal error'}), 500
+
 @app.route('/api/insurance-types', methods=['GET'])
 def get_insurance_types():
     types = InsuranceType.query.filter_by(is_active=True).all()
@@ -1405,7 +1446,11 @@ def get_insurer_stats():
     })
 
 def seed_default_users():
-    """Seed default test users on first run if no users exist."""
+    """Seed default test users on first run if no users exist (DEV/TEST ONLY)."""
+    # Only seed in development or testing mode, NOT in production
+    if app.config.get('ENV') not in ['development', 'testing']:
+        return
+    
     with app.app_context():
         # Check if any users exist
         if User.query.first():
@@ -1424,9 +1469,45 @@ def seed_default_users():
             db.session.add(user)
         
         db.session.commit()
-        print("✓ Default test users seeded on first run")
+        print("✓ Default test users seeded on first run (DEV mode)")
 
 if __name__ == '__main__':
-    # Auto-seed default users on first run
+    # Auto-seed default users on first run (dev/test only)
     seed_default_users()
-    app.run(debug=True, port=5000)
+    
+    # In production, use gunicorn instead: gunicorn -w 4 -b 0.0.0.0:5000 app:app
+    if app.config.get('ENV') == 'production':
+        print("⚠️  Running in PRODUCTION mode. Use gunicorn for better performance:")
+        print("    gunicorn -w 4 -b 0.0.0.0:5000 app:app")
+    
+    app.run(debug=app.config.get('ENV') == 'development', port=5000)
+
+# ── Error Handlers ───────────────────────────────────────────────────────────
+
+@app.errorhandler(404)
+def not_found(e):
+    """Handle 404 errors."""
+    return jsonify({'error': 'Not found', 'message': 'The requested resource does not exist'}), 404
+
+@app.errorhandler(403)
+def forbidden(e):
+    """Handle 403 errors."""
+    return jsonify({'error': 'Forbidden', 'message': 'You do not have permission to access this resource'}), 403
+
+@app.errorhandler(500)
+def internal_error(e):
+    """Handle 500 errors (hide details in production)."""
+    logging.error(f'Internal server error: {e}')
+    message = 'Internal server error' if app.config.get('ENV') == 'production' else str(e)
+    return jsonify({'error': 'Internal server error', 'message': message}), 500
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    """Generic exception handler (safe for production)."""
+    logging.error(f'Unhandled exception: {e}')
+    
+    # Don't expose internal errors in production
+    if app.config.get('ENV') == 'production':
+        return jsonify({'error': 'An error occurred', 'message': 'Please try again later'}), 500
+    else:
+        return jsonify({'error': 'Error', 'message': str(e)}), 500
