@@ -34,6 +34,8 @@ app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=7)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 ALLOWED_EXTENSIONS = {'pdf', 'png', 'jpg', 'jpeg'}
 
+# Set default UPLOAD_FOLDER if not in config
+app.config['UPLOAD_FOLDER'] = app.config.get('UPLOAD_FOLDER', '/tmp/uploads')
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 db = SQLAlchemy(app)
