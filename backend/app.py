@@ -189,29 +189,6 @@ def init_db():
 # Initialize on startup
 init_db()
 
-# ── Health Check & Debug Routes ─────────────────────────────────────────────
-
-@app.route('/api/health', methods=['GET'])
-def health_check():
-    """Health check endpoint."""
-    return jsonify({'status': 'ok', 'message': 'Backend is running'}), 200
-
-@app.route('/api/debug/init-db', methods=['POST'])
-def debug_init_db():
-    """Manual database initialization (debug endpoint)."""
-    try:
-        init_db()
-        user = User.query.filter_by(email='customer@test.com').first()
-        types = InsuranceType.query.count()
-        return jsonify({
-            'status': 'success',
-            'message': 'Database initialized',
-            'test_user_exists': user is not None,
-            'insurance_types_count': types
-        }), 200
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
 # ── Auth Routes ──────────────────────────────────────────────────────────────
 
 @app.route('/api/auth/register', methods=['POST'])
