@@ -41,6 +41,46 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 db = SQLAlchemy(app)
 jwt = JWTManager(app)
 
+# Initialize database on startup
+def init_db():
+    """Initialize database with tables and test data."""
+    with app.app_context():
+        db.create_all()
+        # Create test user if it doesn't exist
+        if not User.query.filter_by(email='customer@test.com').first():
+            hashed = bcrypt.hashpw(b'password123', bcrypt.gensalt()).decode('utf-8')
+            test_user = User(
+                full_name='Test Customer',
+                email='customer@test.com',
+                password=hashed,
+                role='customer'
+            )
+            db.session.add(test_user)
+            db.session.commit()
+            logging.info('✓ Test user created: customer@test.com / password123')
+        
+        # Create insurance types if they don't exist
+        if InsuranceType.query.count() == 0:
+            types = [
+                ('Health Insurance', 'health', 'heart'),
+                ('Vehicle Insurance', 'vehicle', 'car'),
+                ('Life Insurance', 'life', 'shield'),
+                ('Property Insurance', 'property', 'home'),
+                ('Travel Insurance', 'travel', 'plane'),
+                ('Crop Insurance', 'crop', 'wheat'),
+            ]
+            for name, code, icon in types:
+                ins_type = InsuranceType(name=name, code=code, icon=icon, is_active=True)
+                db.session.add(ins_type)
+            db.session.commit()
+            logging.info('✓ Insurance types created')
+
+# Initialize database on first run
+try:
+    init_db()
+except Exception as e:
+    logging.error(f'Database initialization error: {e}')
+
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
